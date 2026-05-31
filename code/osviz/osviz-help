@@ -1,0 +1,51 @@
+#!/bin/sh
+cat <<'EOF'
+=== OSViz ===
+Events log:    /var/log/osviz/events.jsonl
+Snapshots:     /var/log/osviz/snapshots/
+Append event:  osviz-record <module> <event> [json_object]
+Take snapshot: osviz-snapshot [--pid N]
+Library:       #include <osviz/log.h>  -losviz
+
+=== On-site: git ===
+git help
+git init
+git add .
+git commit -m "add README.md"
+git log
+git config --global user.name "youname"
+git config --global user.email "alice@example.com"
+git clone git@github.com:oscomp/xv6-riscv.git my-folder
+git remote add me git@github.com:your/xv6-riscv.git
+git push me
+git pull me
+
+=== On-site: vim ===
+vim -h
+vim hello.c
+
+=== On-site: gcc ===
+gcc --help
+gcc hello.c && ./a.out
+
+=== On-site: rustc ===
+rustc -h
+rustc helloworld.rs && ./helloworld
+
+=== Observation (host / course image) ===
+ps aux
+free
+cat /proc/meminfo
+df -h
+mount
+cat /proc/interrupts
+
+=== Network sanity (QEMU user netdev) ===
+wget -q -O /dev/null -T 5 http://example.com && echo HTTP_OK
+nslookup github.com || getent hosts github.com
+# ICMP to 8.8.8.8 often fails under -netdev user; use wget/git instead.
+
+=== OSViz snapshot ===
+osviz-snapshot
+osviz-snapshot --pid 123
+EOF

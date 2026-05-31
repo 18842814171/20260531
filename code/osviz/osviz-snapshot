@@ -1,0 +1,88 @@
+#!/bin/sh
+# On-demand system snapshot (JSON). Busybox / POSIX sh.
+# Usage: osviz-snapshot [--pid N]
+
+set -e
+
+OSVIZ_DIR="/var/log/osviz"
+SNAP_DIR="${OSVIZ_DIR}/snapshots"
+EXTRA_PID=""
+
+if [ "$1" = "--pid" ] && [ -n "$2" ]; then
+	EXTRA_PID="$2"
+	shift 2
+fi
+
+mkdir -p "${SNAP_DIR}"
+
+# Read stdin, flatten and escape for JSON string value.
+_jsonify() {
+	head -c 16000 | tr '\n' ' ' | tr -d '\r' | sed 's/\\/\\\\/g;s/"/\\"/g'
+}
+
+json_file() {
+	if [ ! -r "$1" ]; then
+		printf ''
+		return
+	fi
+	head -c 16000 "$1" | _jsonify
+}
+
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+
+BOOT_CMDLINE="$(json_file /proc/cmdline)"
+BOOT_DMESG="$(dmesg 2>/dev/null | head -n 40 | _jsonify)"
+BOOT_UNAME="$(uname -a 2>/dev/null | _jsonify)"
+
+IRQ_INT="$(json_file /proc/interrupts)"
+IRQ_SOFT="$(json_file /proc/softirqs)"
+
+MEM_FREE="$(free 2>/dev/null | _jsonify)"
+MEM_INFO="$(json_file /proc/meminfo)"
+
+PROC_PS="$( (ps -eo pid,ppid,stat,cmd 2>/dev/null || ps aux 2>/dev/null) | _jsonify )"
+PROC_LIST="$(ls /proc 2>/dev/null | grep '^[0-9][0-9]*$' | sort -n | paste -sd, 2>/dev/null || true)"
+
+FS_DF="$(df -h 2>/dev/null | _jsonify)"
+FS_MOUNT="$(mount 2>/dev/null | _jsonify)"
+FS_ROOTLS="$(ls -li / 2>/dev/null | head -n 80 | _jsonify)"
+
+GIT_V="$( (git -v 2>/dev/null) | _jsonify )"
+GCC_V="$( (gcc -v 2>&1) | _jsonify )"
+RUSTC_V="$( (rustc --version 2>/dev/null) | _jsonify )"
+VIM_V="$( (vim --version 2>/dev/null | head -n 3) | _jsonify )"
+WHICH_BIN="$( (which git vim gcc rustc 2>/dev/null) | _jsonify )"
+
+MAPS_SAMPLE="null"
+if [ -n "$EXTRA_PID" ] && [ -r "/proc/${EXTRA_PID}/maps" ]; then
+	MAPS_SAMPLE="\"$(json_file "/proc/${EXTRA_PID}/maps")\""
+fi
+
+OUT="${SNAP_DIR}/snapshot-$(date +%Y%m%d-%H%M%S).json"
+
+{
+	printf '{\n'
+	printf '  "ts": "%s",\n' "${TS}"
+	printf '  "boot": {"cmdline": "%s", "dmesg_head": "%s", "uname": "%s"},\n' \
+		"${BOOT_CMDLINE}" "${BOOT_DMESG}" "${BOOT_UNAME}"
+	printf '  "irq": {"interrupts": "%s", "softirqs": "%s"},\n' "${IRQ_INT}" "${IRQ_SOFT}"
+	printf '  "mem": {"free": "%s", "meminfo": "%s"},\n' "${MEM_FREE}" "${MEM_INFO}"
+	printf '  "proc": {"ps": "%s", "pid_list": [%s]},\n' "${PROC_PS}" "${PROC_LIST}"
+	printf '  "fs": {"df": "%s", "mount": "%s", "root_ls": "%s"},\n' "${FS_DF}" "${FS_MOUNT}" "${FS_ROOTLS}"
+	printf '  "user": {\n'
+	printf '    "git_version": "%s",\n' "${GIT_V}"
+	printf '    "gcc_version": "%s",\n' "${GCC_V}"
+	printf '    "rustc_version": "%s",\n' "${RUSTC_V}"
+	printf '    "vim_version": "%s",\n' "${VIM_V}"
+	printf '    "which_output": "%s"\n' "${WHICH_BIN}"
+	printf '  },\n'
+	printf '  "pagetable": {\n'
+	printf '    "status": "placeholder",\n'
+	printf '    "reason": "User space cannot walk the hardware page table",\n'
+	printf '    "fallback": "/proc/PID/maps for virtual memory layout",\n'
+	printf '    "maps_sample": %s\n' "${MAPS_SAMPLE}"
+	printf '  }\n'
+	printf '}\n'
+} > "${OUT}"
+
+echo "Wrote ${OUT}"

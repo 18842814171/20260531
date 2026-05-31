@@ -1,0 +1,17 @@
+#!/bin/sh
+#
+# Ensure OSViz log directories exist at boot (no background collector).
+#
+case "$1" in
+  start)
+	mkdir -p /var/log/osviz/snapshots
+	;;
+  stop)
+	;;
+  *)
+	echo "Usage: $0 {start|stop}"
+	exit 1
+	;;
+esac
+
+exit 0

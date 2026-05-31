@@ -1,0 +1,173 @@
+#ifdef CONFIG_OPENSBI
+#define LOAD		ld
+#define STORE		sd
+#define SIZE_REG	8
+#define CSR_SCRATCH	sscratch
+#define CSR_EPC		sepc
+#define CSR_CAUSE	scause
+#define TRAP_RET	sret
+#else
+#define LOAD		lw
+#define STORE		sw
+#define SIZE_REG	4
+#define CSR_SCRATCH	mscratch
+#define CSR_EPC		mepc
+#define CSR_CAUSE	mcause
+#define TRAP_RET	mret
+#endif
+
+.macro reg_save base
+	STORE ra,   0*SIZE_REG(\base)
+	STORE sp,   1*SIZE_REG(\base)
+	STORE gp,   2*SIZE_REG(\base)
+	STORE tp,   3*SIZE_REG(\base)
+	STORE t0,   4*SIZE_REG(\base)
+	STORE t1,   5*SIZE_REG(\base)
+	STORE t2,   6*SIZE_REG(\base)
+	STORE s0,   7*SIZE_REG(\base)
+	STORE s1,   8*SIZE_REG(\base)
+	STORE a0,   9*SIZE_REG(\base)
+	STORE a1,  10*SIZE_REG(\base)
+	STORE a2,  11*SIZE_REG(\base)
+	STORE a3,  12*SIZE_REG(\base)
+	STORE a4,  13*SIZE_REG(\base)
+	STORE a5,  14*SIZE_REG(\base)
+	STORE a6,  15*SIZE_REG(\base)
+	STORE a7,  16*SIZE_REG(\base)
+	STORE s2,  17*SIZE_REG(\base)
+	STORE s3,  18*SIZE_REG(\base)
+	STORE s4,  19*SIZE_REG(\base)
+	STORE s5,  20*SIZE_REG(\base)
+	STORE s6,  21*SIZE_REG(\base)
+	STORE s7,  22*SIZE_REG(\base)
+	STORE s8,  23*SIZE_REG(\base)
+	STORE s9,  24*SIZE_REG(\base)
+	STORE s10, 25*SIZE_REG(\base)
+	STORE s11, 26*SIZE_REG(\base)
+	STORE t3,  27*SIZE_REG(\base)
+	STORE t4,  28*SIZE_REG(\base)
+	STORE t5,  29*SIZE_REG(\base)
+.endm
+
+.macro reg_restore base
+	LOAD ra,   0*SIZE_REG(\base)
+	LOAD sp,   1*SIZE_REG(\base)
+	LOAD gp,   2*SIZE_REG(\base)
+	LOAD tp,   3*SIZE_REG(\base)
+	LOAD t0,   4*SIZE_REG(\base)
+	LOAD t1,   5*SIZE_REG(\base)
+	LOAD t2,   6*SIZE_REG(\base)
+	LOAD s0,   7*SIZE_REG(\base)
+	LOAD s1,   8*SIZE_REG(\base)
+	LOAD a0,   9*SIZE_REG(\base)
+	LOAD a1,  10*SIZE_REG(\base)
+	LOAD a2,  11*SIZE_REG(\base)
+	LOAD a3,  12*SIZE_REG(\base)
+	LOAD a4,  13*SIZE_REG(\base)
+	LOAD a5,  14*SIZE_REG(\base)
+	LOAD a6,  15*SIZE_REG(\base)
+	LOAD a7,  16*SIZE_REG(\base)
+	LOAD s2,  17*SIZE_REG(\base)
+	LOAD s3,  18*SIZE_REG(\base)
+	LOAD s4,  19*SIZE_REG(\base)
+	LOAD s5,  20*SIZE_REG(\base)
+	LOAD s6,  21*SIZE_REG(\base)
+	LOAD s7,  22*SIZE_REG(\base)
+	LOAD s8,  23*SIZE_REG(\base)
+	LOAD s9,  24*SIZE_REG(\base)
+	LOAD s10, 25*SIZE_REG(\base)
+	LOAD s11, 26*SIZE_REG(\base)
+	LOAD t3,  27*SIZE_REG(\base)
+	LOAD t4,  28*SIZE_REG(\base)
+	LOAD t5,  29*SIZE_REG(\base)
+	LOAD t6,  30*SIZE_REG(\base)
+.endm
+
+.text
+
+.globl trap_vector
+.globl prog_exec_restore_shell
+.globl user_cxt
+.globl shell_save_cxt
+
+	.section .rodata
+	.align 3
+kernel_trap_sp:
+	.dword	0x80210000
+user_code_start:
+	.dword	0x80380000
+user_code_end:
+	.dword	0x80400000
+
+	.text
+.balign 4
+trap_vector:
+	csrrw	t6, CSR_SCRATCH, t6
+	/* If EPC is in user program region, save/restore user_cxt instead. */
+	csrr	t4, CSR_EPC
+	la	t0, user_code_start
+	ld	t0, 0(t0)
+	bltu	t4, t0, 1f
+	la	t0, user_code_end
+	ld	t0, 0(t0)
+	bgeu	t4, t0, 1f
+	la	t6, user_cxt
+1:
+	reg_save t6
+
+	mv	t5, t6
+	csrr	t6, CSR_SCRATCH
+	STORE	t6, 30*SIZE_REG(t5)
+
+	csrr	a0, CSR_EPC
+	STORE	a0, 31*SIZE_REG(t5)
+
+	csrw	CSR_SCRATCH, t5
+
+	csrr	a0, CSR_EPC
+	csrr	a1, CSR_CAUSE
+	mv	a2, t5
+	/* User traps run trap_handler on the kernel stack (user sp is tiny). */
+	csrr	t4, CSR_EPC
+	la	t0, user_code_start
+	ld	t0, 0(t0)
+	bltu	t4, t0, 1f
+	la	t0, user_code_end
+	ld	t0, 0(t0)
+	bgeu	t4, t0, 1f
+	la	t3, kernel_trap_sp
+	ld	sp, 0(t3)
+1:
+	call	trap_handler
+
+	csrw	CSR_EPC, a0
+
+	la	t4, prog_exec_restore_shell
+	lw	t4, 0(t4)
+	beqz	t4, 2f
+	la	t6, shell_save_cxt
+	j	3f
+2:
+	csrr	t6, CSR_SCRATCH
+3:
+	reg_restore t6
+
+	la	t4, prog_exec_restore_shell
+	beqz	t4, 4f
+	la	t4, prog_exec_restore_shell
+	sw	zero, 0(t4)
+4:
+	TRAP_RET
+
+.globl switch_to
+.balign 4
+switch_to:
+	LOAD	a1, 31*SIZE_REG(a0)
+	csrw	CSR_EPC, a1
+
+	mv	t6, a0
+	reg_restore t6
+
+	TRAP_RET
+
+.end
