@@ -6,7 +6,7 @@ set -euo pipefail
 MYOS_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${MYOS_ROOT}"
 
-make build >/dev/null
+make >/dev/null
 
 OUT="$(mktemp)"
 trap 'rm -f "${OUT}"' EXIT

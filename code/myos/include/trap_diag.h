@@ -10,12 +10,12 @@ struct context;
 #define TRAP_DIAG_VERBOSE 0
 #endif
 
-extern unsigned long trap_diag_shell_restore_count;
+extern unsigned long trap_diag_user_exit_count;
 
 void trap_diag_trap_enter(reg_t epc, reg_t cause, struct context *cxt);
 void trap_diag_post_handler(reg_t ret_epc);
 void trap_diag_trap_return(reg_t sepc, struct context *frame);
-void trap_diag_shell_restore_branch(void);
+void trap_diag_user_exit_branch(void);
 void trap_diag_print_csrs(const char *tag);
 
 #endif

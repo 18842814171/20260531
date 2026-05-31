@@ -13,7 +13,7 @@ OBJDUMP="${RV64_OBJDUMP:-riscv64-unknown-elf-objdump}"
 ARCH_CFLAGS="-march=rv64gc -mabi=lp64 -mcmodel=medany"
 USER_CFLAGS="-ffreestanding -nostdlib -fno-builtin -static -Wall -g"
 USER_CFLAGS+=" $ARCH_CFLAGS -I $MYOS_ROOT/include"
-USER_LDFLAGS="-nostdlib -static -T $USR_DIR/user.ld"
+USER_LDFLAGS="-nostdlib -static -T $MYOS_ROOT/ld/user.ld"
 
 resolve_src() {
 	local f="$1"

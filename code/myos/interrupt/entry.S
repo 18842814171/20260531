@@ -5,6 +5,8 @@
 #define CSR_SCRATCH	sscratch
 #define CSR_EPC		sepc
 #define CSR_CAUSE	scause
+#define CSR_STATUS	sstatus
+#define SPP_MASK	(1 << 8)	/* SSTATUS_SPP: sret -> S-mode */
 #define TRAP_RET	sret
 #else
 #define LOAD		lw
@@ -86,9 +88,8 @@
 .text
 
 .globl trap_vector
-.globl prog_exec_restore_shell
-.globl user_cxt
-.globl shell_save_cxt
+.globl proc_user_exit_pending
+.globl user_trap_save_cxt
 .globl kernel_trap_cxt
 .globl trap_diag_post_handler
 .globl trap_diag_shell_restore_branch
@@ -108,7 +109,7 @@ user_code_end:
 .balign 4
 trap_vector:
 	csrrw	t6, CSR_SCRATCH, t6
-	/* If EPC is in user program region, save/restore user_cxt instead. */
+	/* User EPC: save/restore frame via user_trap_save_cxt (per-process). */
 	csrr	t4, CSR_EPC
 	la	t0, user_code_start
 	ld	t0, 0(t0)
@@ -116,7 +117,10 @@ trap_vector:
 	la	t0, user_code_end
 	ld	t0, 0(t0)
 	bgeu	t4, t0, 1f
-	la	t6, user_cxt
+	la	t0, user_trap_save_cxt
+	ld	t6, 0(t0)
+	bnez	t6, 1f
+	la	t6, kernel_trap_cxt
 1:
 	reg_save t6
 
@@ -163,15 +167,19 @@ trap_vector:
 	ld	ra, 0(sp)
 	addi	sp, sp, 16
 
-	la	t4, prog_exec_restore_shell
+	la	t4, proc_user_exit_pending
 	lw	t4, 0(t4)
 	beqz	t4, 2f
 	addi	sp, sp, -16
 	sd	ra, 0(sp)
-	call	trap_diag_shell_restore_branch
+	call	trap_diag_user_exit_branch
 	ld	ra, 0(sp)
 	addi	sp, sp, 16
-	la	t6, shell_save_cxt
+	la	t0, user_trap_save_cxt
+	ld	t6, 0(t0)
+	/* User exit via syscall leaves SPP=0; sret must land in S-mode (kernel). */
+	li	t0, SPP_MASK
+	csrs	CSR_STATUS, t0
 	j	3f
 2:
 	mv	t6, t5
@@ -189,9 +197,9 @@ trap_vector:
 	csrw	CSR_SCRATCH, t0
 	reg_restore t6
 
-	la	t4, prog_exec_restore_shell
+	la	t4, proc_user_exit_pending
 	beqz	t4, 5f
-	la	t4, prog_exec_restore_shell
+	la	t4, proc_user_exit_pending
 	sw	zero, 0(t4)
 5:
 	TRAP_RET
@@ -204,6 +212,12 @@ switch_to:
 
 	mv	t6, a0
 	reg_restore t6
+
+#ifdef CONFIG_OPENSBI
+	/* Enter user at U-mode (clear SPP before sret). */
+	li	t0, SPP_MASK
+	csrc	CSR_STATUS, t0
+#endif
 
 	TRAP_RET
 

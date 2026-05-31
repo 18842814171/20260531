@@ -4,6 +4,7 @@
 #include "syscall.h"
 #include "trap_csr.h"
 #include "trap_diag.h"
+#include "proc_user.h"
 
 extern void trap_vector(void);
 extern void uart_isr(void);
@@ -12,10 +13,8 @@ extern void schedule(void);
 extern int sched_task_count(void);
 extern void do_syscall(struct context *cxt);
 extern void task_exit_to_idle(struct context *cxt, int status);
-extern int prog_exec_active;
-extern int prog_exec_restore_shell;
-extern void prog_exec_done(void);
-extern struct context shell_save_cxt;
+extern void user_exit_trampoline(void);
+extern int proc_user_exit_pending;
 
 struct context kernel_trap_cxt;
 reg_t kernel_gp_value;
@@ -30,12 +29,12 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 	case 9:
 		stats_inc_ecall();
 		if (cxt->a7 == SYS_exit) {
-			if (prog_exec_active) {
-				shell_save_cxt.a0 = cxt->a0;
-				prog_exec_restore_shell = 1;
-				prog_exec_active = 0;
-				*return_pc = (reg_t)prog_exec_done;
-				osviz_event("proc", "exit", "\"from\":\"prog_exec\"");
+			int pid = proc_current_pid();
+
+			if (pid > 0) {
+				proc_user_exit(pid, (int)cxt->a0);
+				*return_pc = (reg_t)user_exit_trampoline;
+				osviz_event("proc", "exit", "\"from\":\"user\"");
 			} else {
 				task_exit_to_idle(cxt, (int)cxt->a0);
 				osviz_event("proc", "exit", NULL);

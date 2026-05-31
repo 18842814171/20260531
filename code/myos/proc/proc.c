@@ -89,9 +89,15 @@ void proc_set_state(int pid, enum proc_state st)
 	}
 }
 
-int proc_current_pid(void)
+int proc_slot_by_pid(int pid)
 {
-	return 0;
+	int i;
+
+	for (i = 0; i < PROC_MAX; i++) {
+		if (procs[i].pid == pid && procs[i].state != PROC_UNUSED)
+			return i;
+	}
+	return -1;
 }
 
 int proc_count(void)

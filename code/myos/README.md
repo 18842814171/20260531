@@ -13,16 +13,16 @@ cd usr
 ./compile.sh c file_rw.c
 ```
 
-仅支持 `./compile.sh c <文件名>`，源文件与可执行文件均放在用户目录（不在命令行中写路径）。
-
+用法： `./compile.sh c <文件名>`，源文件与可执行文件均放在用户目录（不在命令行中写路径）。
+`./compile.sh dump <文件名>` 反汇编
 ## 构建内核并运行
 
 ```bash
-make build
+make
 ./sh/start_qemu.sh
 ```
 
-`make build` 会把 `home/root/` 打包进 ramfs。
+`make` 会把 `home/root/` 打包进 ramfs。
 
 ## 目标机示例
 
@@ -36,8 +36,3 @@ root@/home/root$ ./file_rw
 root@/home/root$ sh hello.sh
 ```
 
-## 测试
-
-```bash
-./sh/run-tests.sh
-```

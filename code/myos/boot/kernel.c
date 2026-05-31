@@ -1,5 +1,6 @@
 #include "os.h"
 #include "proc.h"
+#include "proc_user.h"
 #include "osviz_k.h"
 #include "trap_csr.h"
 
@@ -81,6 +82,7 @@ void start_kernel(void)
 
 	fs_init();
 	proc_init();
+	proc_user_init();
 
 	page_init();
 	osviz_event("boot", "page_init", NULL);

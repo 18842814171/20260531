@@ -1,6 +1,7 @@
 #include "os.h"
 #include "osviz_k.h"
 #include "proc.h"
+#include "proc_user.h"
 #include "fs.h"
 
 #define LINE_MAX 128
@@ -345,9 +346,9 @@ static void shell_loop(void)
 			script_run(skip_word(line + 2));
 		} else if (str_prefix(line, "./") || (line[0] == '/' && !str_prefix(line, "//"))) {
 			if (str_prefix(line, "./"))
-				prog_exec(line + 2);
+				proc_spawn_exec_wait(line + 2);
 			else
-				prog_exec(line);
+				proc_spawn_exec_wait(line);
 		} else if (str_eq(line, "ps")) {
 			cmd_ps(0);
 		} else if (str_eq(line, "ps aux")) {
@@ -369,6 +370,8 @@ void console_run(void)
 {
 	for (;;) {
 		uart_puts("\n=== myos console ===\n");
+		/* Once per session: drop -serial stdio TX loopback from boot. */
+		uart_rx_flush();
 		login_session();
 		shell_loop();
 	}

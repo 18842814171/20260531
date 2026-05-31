@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+"""Save last N OSVIZ events: ./osviz-save <N>"""
+
+import sys
+from datetime import datetime
+from pathlib import Path
+
+OSVIZ_ROOT = Path(__file__).resolve().parent
+EVENTS_DIR = OSVIZ_ROOT / "events"
+JSONL = EVENTS_DIR / "events.jsonl"
+
+
+def main():
+    if len(sys.argv) != 2 or not sys.argv[1].isdigit() or int(sys.argv[1]) < 1:
+        print(f"用法: {sys.argv[0]} <数字>", file=sys.stderr)
+        print("  将 events/events.jsonl 中最近 <数字> 条写入 events/manual-*.jsonl",
+              file=sys.stderr)
+        sys.exit(1)
+
+    n = int(sys.argv[1])
+    if not JSONL.is_file():
+        print(f"error: 没有日志文件 {JSONL}", file=sys.stderr)
+        print("hint: 先通过 serial_reader 或带 OSVIZ 的 QEMU 产生事件", file=sys.stderr)
+        sys.exit(1)
+
+    lines = [ln for ln in JSONL.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    picked = lines[-n:] if len(lines) >= n else lines
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    out = EVENTS_DIR / f"manual-{len(picked)}-{stamp}.jsonl"
+    EVENTS_DIR.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(picked) + ("\n" if picked else ""), encoding="utf-8")
+    print(f"osviz-save: {len(picked)} 条 -> {out}")
+
+
+if __name__ == "__main__":
+    main()

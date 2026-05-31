@@ -5,6 +5,8 @@
 set -euo pipefail
 
 MYOS_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OSVIZ_ROOT="$(cd "${MYOS_ROOT}/../osviz" && pwd)"
+SERIAL_READER="${OSVIZ_ROOT}/bridge/serial_reader.py"
 KERNEL="${1:-${MYOS_KERNEL:-${MYOS_ROOT}/out/os}}"
 FW="${OPENSBI_FW:-${MYOS_ROOT}/firmware/fw_jump}"
 
@@ -27,13 +29,16 @@ fi
 
 if [[ ! -f "${KERNEL}" ]]; then
 	echo "error: kernel not found: ${KERNEL}" >&2
-	echo "hint: run 'make build' in ${MYOS_ROOT}" >&2
+	echo "hint: run 'make' in ${MYOS_ROOT}" >&2
 	exit 1
 fi
 
 run_qemu() {
 	echo "myos QEMU"
 	echo "  kernel: ${KERNEL}"
+	if [[ "${OSVIZ_CAPTURE:-y}" != "n" && -f "${SERIAL_READER}" ]]; then
+		echo "  osviz:  ${OSVIZ_ROOT}/events/ (auto recent 10)"
+	fi
 	echo "  quit:   Ctrl+C  (stops QEMU)"
 	echo "          poweroff at login: or myos>"
 	echo "------------------------------------"
@@ -41,18 +46,22 @@ run_qemu() {
 		stty -icanon -echo min 1 time 0 2>/dev/null || true
 		trap 'stty sane 2>/dev/null || true' EXIT INT TERM
 	fi
-	exec "$@"
+	if [[ "${OSVIZ_CAPTURE:-y}" != "n" && -f "${SERIAL_READER}" ]]; then
+		"${QEMU}" "$@" 2>&1 | python3 "${SERIAL_READER}"
+	else
+		exec "${QEMU}" "$@"
+	fi
 }
 
 if [[ "${USE_OPENSBI}" -eq 1 ]]; then
 	if [[ ! -f "${FW}" ]]; then
 		echo "error: OpenSBI firmware missing: ${FW}" >&2
-		echo "hint: run 'make fw' (copies from ~/5.18/.../fw_jump.bin) or set OPENSBI_FW" >&2
+		echo "hint: place fw_jump.bin there (prebuilt, not managed by make) or set OPENSBI_FW" >&2
 		exit 1
 	fi
 	echo "  firmware: ${FW}  (OpenSBI M→S, prebuilt)"
-	run_qemu "${QEMU}" ${QFLAGS} -bios "${FW}" -kernel "${KERNEL}"
+	run_qemu ${QFLAGS} -bios "${FW}" -kernel "${KERNEL}"
 else
 	echo "  boot: direct M-mode (-bios none)"
-	run_qemu "${QEMU}" ${QFLAGS} -kernel "${KERNEL}"
+	run_qemu ${QFLAGS} -kernel "${KERNEL}"
 fi

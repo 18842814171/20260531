@@ -24,7 +24,7 @@ void proc_init(void);
 int  proc_alloc(const char *name, int ppid);
 void proc_set_name(int pid, const char *name);
 void proc_set_state(int pid, enum proc_state st);
-int  proc_current_pid(void);
+int  proc_slot_by_pid(int pid);
 int  proc_count(void);
 int  proc_list(struct proc_info *out, int max);
 

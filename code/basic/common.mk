@@ -3,8 +3,7 @@
 
 # Custom Macro Definition (Common part)
 
-include ../defines.mk
-DEFS +=
+DEFS ?=
 
 CROSS_COMPILE = riscv64-unknown-elf-
 CFLAGS += -nostdlib -fno-builtin -g -Wall
@@ -52,7 +51,7 @@ ${OUTPUT_PATH}:
 # -x c tells GCC to treat your linker script as C source file
 ${ELF}: ${OBJS}
 ifeq (${USE_LINKER_SCRIPT}, true)
-	${CC} -E -P -x c ${DEFS} ${CFLAGS} os.ld > ${OUTPUT_PATH}/os.ld.generated
+	${CC} -E -P -x c ${DEFS} ${CFLAGS} -I. ../ld/os.ld > ${OUTPUT_PATH}/os.ld.generated
 endif
 	${CC} ${CFLAGS} ${LDFLAGS} -o ${ELF} $^
 	${OBJCOPY} -O binary ${ELF} ${BIN}

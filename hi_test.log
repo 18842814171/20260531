@@ -71,50 +71,31 @@ Boot HART MEDELEG           : 0x000000000000b109
   myos 0.2.0-boot (RISC-V rv64, S-mode via OpenSBI)
   OpenSBI M→S handoff, kernel @ 0x80200000
 ========================================
-OSVIZ {"ts_ms":1,"module":"boot","event":"banner","hart":0,"data":{"version":"0.2.0-boot"}}
-OSVIZ {"ts_ms":1,"module":"boot","event":"entry","hart":0,"data":{"load":"0x80200000","mode":"S","firmware":"OpenSBI"}}
-OSVIZ {"ts_ms":2,"module":"boot","event":"opensbi_handoff","hart":0,"data":{"hart":0,"dtb":"0x0000000082200000"}}
-OSVIZ {"ts_ms":2,"module":"boot","event":"bss_done","hart":0,"data":{"bss_start":"0x000000008020f070","bss_end":"0x0000000080318bd8","bss_bytes":1088360}}
-OSVIZ {"ts_ms":2,"module":"boot","event":"stack_ready","hart":0,"data":{"sp_ready":true}}
-OSVIZ {"ts_ms":2,"module":"boot","event":"priv_config","hart":0,"data":{"mode":"S","note":"OpenSBI completed M→S"}}
-OSVIZ {"ts_ms":2,"module":"boot","event":"uart_init","hart":0}
-HEAP_START = 0x0000000080318bd8(aligned to 0x0000000080319000), HEAP_SIZE = 0x0000000007ee7428,
-num of reserved pages = 8, num of pages to be allocated for heap = 32479
-TEXT:   0x0000000080200000 -> 0x0000000080206f32
-RODATA: 0x0000000080206f38 -> 0x000000008020e0cb
-DATA:   0x000000008020f000 -> 0x000000008020f068
-BSS:    0x000000008020f070 -> 0x0000000080318bd8
-HEAP:   0x0000000080321000 -> 0x0000000088200000
-OSVIZ {"ts_ms":0,"module":"boot","event":"page_init","hart":0}
-OSVIZ {"ts_ms":0,"module":"boot","event":"trap_init","hart":0,"data":{"tvec":"0x0000000080200058"}}
-OSVIZ {"ts_ms":0,"module":"boot","event":"plic_init","hart":0}
-OSVIZ {"ts_ms":0,"module":"irq","event":"uart_init","hart":0,"data":{"rx_irq":false,"rx_poll":true}}
-OSVIZ {"ts_ms":0,"module":"boot","event":"timer_init","hart":0,"data":{"hz":100}}
-OSVIZ {"ts_ms":0,"module":"boot","event":"sched_init","hart":0}
-OSVIZ {"ts_ms":0,"module":"boot","event":"os_main_done","hart":0,"data":{"console":true}}
-OSVIZ {"ts_ms":0,"module":"boot","event":"kernel_ready","hart":0,"data":{"status":"ok"}}
+OSVIZ {"ts_ms":0,"module":"boot","event":"banner","hart":0,"data":{"version":"0.2.0-boot"}}
+OSVIZ {"ts_ms":0,"module":"boot","event":"entry","hart":0,"data":{"load":"0x80200000","mode":"S","firmware":"OpenSBI"}}
+OSVIZ {"ts_ms":1,"module":"boot","event":"opensbi_handoff","hart":0,"data":{"hart":0,"dtb":"0x0000000082200000"}}
+OSVIZ {"ts_ms":1,"module":"boot","event":"bss_done","hart":0,"data":{"bss_start":"0x000000008020f070","bss_end":"0x0000000080319b38","bss_bytes":1092296}}
+OSVIZ {"ts_ms":1,"module":"boot","event":"stack_ready","hart":0,"data":{"sp_ready":true}}
+OSVIZ {"ts_ms":1,"module":"boot","event":"priv_config","hart":0,"data":{"mode":"S","note":"OpenSBI completed M→S"}}
+OSVIZ {"ts_ms":1,"module":"boot","event":"uart_init","hart":0}
+HEAP_START = 0x0000000080319b38(aligned to 0x000000008031a000), HEAP_SIZE = 0x0000000007ee64c8,
+num of reserved pages = 8, num of pages to be allocated for heap = 32478
+TEXT:   0x0000000080200000 -> 0x0000000080207718
+RODATA: 0x0000000080207718 -> 0x000000008020e833
+DATA:   0x000000008020f000 -> 0x000000008020f070
+BSS:    0x000000008020f070 -> 0x0000000080319b38
+HEAP:   0x0000000080322000 -> 0x0000000088200000
+OSVIZ {"ts_ms":4,"module":"boot","event":"page_init","hart":0}
+OSVIZ {"ts_ms":4,"module":"boot","event":"trap_init","hart":0,"data":{"tvec":"0x0000000080200058"}}
+OSVIZ {"ts_ms":5,"module":"boot","event":"plic_init","hart":0}
+OSVIZ {"ts_ms":5,"module":"irq","event":"uart_init","hart":0,"data":{"rx_irq":false,"rx_poll":true}}
+OSVIZ {"ts_ms":5,"module":"boot","event":"timer_init","hart":0,"data":{"hz":100}}
+OSVIZ {"ts_ms":5,"module":"boot","event":"sched_init","hart":0}
+OSVIZ {"ts_ms":6,"module":"boot","event":"os_main_done","hart":0,"data":{"console":true}}
+OSVIZ {"ts_ms":6,"module":"boot","event":"kernel_ready","hart":0,"data":{"status":"ok"}}
 Hello, RVOS!
 
 System ready. Log in at the prompt below.
 
 === myos console ===
-login: root
-
-Welcome, root.
-Shell commands (Linux-style):
-  cd [dir]        pwd             ls [dir]
-  cat <file>      touch <file>      vi <file>
-  echo ...        echo ... > f      echo ... >> f
-  ./program       sh script.sh
-  ps / ps aux     spawn worker      help / logout / poweroff
-root@/home/root$ ./hi
-hi from ./hi
-[trap-diag] RETURN sepc=0x8038004e restore_frame=user_cxt sscratch=0x8020f5b0
-OSVIZ {"ts_ms":0,"module":"proc","event":"exit","hart":0,"data":{"from":"prog_exec"}}
-[trap-diag] SHELL_RESTORE branch #0x1 (entry.S -> shell_save_cxt)
-[trap-diag] RETURN sepc=0x802040a6 restore_frame=shell_save_cxt sscratch=0x8020f5b0
-root@/home/root$ poweroff
-OSVIZ {"ts_ms":0,"module":"irq","event":"sync_exception","hart":0,"data":{"code":2}}
-Sync exception code = 2 at 0x0000000080200e30
-[trap-diag] panic-sync scause=0x0000000000000002 stval=0x00000000100027f3 sepc=0x0000000080200e30 sstatus=0x8000000000006020 sscratch=0x000000008020f5b0
-panic: OOPS! What can I do!
+smoke: failed at stage 1

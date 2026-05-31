@@ -1,14 +1,14 @@
 #include "os.h"
 #include "trap_diag.h"
 #include "trap_csr.h"
+#include "proc_user.h"
 
-extern struct context user_cxt;
-extern struct context shell_save_cxt;
+extern struct context *user_trap_save_cxt;
 extern struct context kernel_trap_cxt;
-extern int prog_exec_active;
-extern int prog_exec_restore_shell;
+extern struct context kernel_user_exit_cxt;
+extern int proc_user_exit_pending;
 
-unsigned long trap_diag_shell_restore_count;
+unsigned long trap_diag_user_exit_count;
 
 #define USER_CODE_START 0x80380000UL
 #define USER_CODE_END   0x80400000UL
@@ -22,12 +22,12 @@ static const char *frame_name(struct context *cxt)
 {
 	unsigned long p = (unsigned long)cxt;
 
-	if (p == (unsigned long)&user_cxt)
-		return "user_cxt";
+	if (user_trap_save_cxt && p == (unsigned long)user_trap_save_cxt)
+		return "user_proc";
 	if (p == (unsigned long)&kernel_trap_cxt)
 		return "kernel_trap_cxt";
-	if (p == (unsigned long)&shell_save_cxt)
-		return "shell_save_cxt";
+	if (p == (unsigned long)&kernel_user_exit_cxt)
+		return "user_exit_cxt";
 	return "other";
 }
 
@@ -37,9 +37,9 @@ static int trap_diag_interesting(reg_t epc, reg_t cause, struct context *cxt)
 		return 1;
 	if (epc_in_user(epc))
 		return 1;
-	if ((unsigned long)cxt == (unsigned long)&user_cxt)
+	if (user_trap_save_cxt && (unsigned long)cxt == (unsigned long)user_trap_save_cxt)
 		return 1;
-	if (prog_exec_active || prog_exec_restore_shell)
+	if (proc_user_exit_pending)
 		return 1;
 	return 0;
 }
@@ -74,31 +74,28 @@ void trap_diag_trap_enter(reg_t epc, reg_t cause, struct context *cxt)
 
 	printf("[trap-diag] ENTER %s epc=0x%lx cause=0x%lx code=%ld "
 	       "save_frame=%s user_epc=%d sscratch=0x%lx "
-	       "prog_active=%d restore_shell=%lu\n",
+	       "user_exit=%d hits=%lu\n",
 	       kind, (unsigned long)epc, (unsigned long)cause,
 	       (long)(cause & CAUSE_MASK_ECODE),
 	       frame_name(cxt), epc_in_user(epc) ? 1 : 0,
 	       (unsigned long)sscratch_now,
-	       prog_exec_active,
-	       trap_diag_shell_restore_count);
+	       proc_user_exit_pending,
+	       trap_diag_user_exit_count);
 }
 
 void trap_diag_post_handler(reg_t ret_epc)
 {
-	int shell_path;
-
 	if (!TRAP_DIAG_VERBOSE)
 		return;
 
-	shell_path = prog_exec_restore_shell;
-	if (!shell_path && !prog_exec_active && !epc_in_user(ret_epc))
+	if (!proc_user_exit_pending && !epc_in_user(ret_epc))
 		return;
 
 	printf("[trap-diag] LEAVE trap_handler ret_sepc=0x%lx "
-	       "restore_shell_flag=%d shell_restore_hits=%lu "
+	       "user_exit_flag=%d user_exit_hits=%lu "
 	       "sscratch=0x%lx sstatus=0x%lx\n",
-	       (unsigned long)ret_epc, shell_path,
-	       trap_diag_shell_restore_count,
+	       (unsigned long)ret_epc, proc_user_exit_pending,
+	       trap_diag_user_exit_count,
 	       (unsigned long)r_sscratch(),
 	       (unsigned long)r_sstatus());
 }
@@ -123,10 +120,7 @@ static void trap_diag_put_hex(reg_t v)
 
 void trap_diag_trap_return(reg_t sepc, struct context *frame)
 {
-	/* Always print on syscall/shell return (uart only — safe inside trap). */
-	if ((unsigned long)frame != (unsigned long)&user_cxt &&
-	    (unsigned long)frame != (unsigned long)&shell_save_cxt &&
-	    !epc_in_user(sepc))
+	if (!epc_in_user(sepc) && !proc_user_exit_pending)
 		return;
 
 	uart_puts("[trap-diag] RETURN sepc=");
@@ -138,10 +132,10 @@ void trap_diag_trap_return(reg_t sepc, struct context *frame)
 	uart_putc('\n');
 }
 
-void trap_diag_shell_restore_branch(void)
+void trap_diag_user_exit_branch(void)
 {
-	trap_diag_shell_restore_count++;
-	uart_puts("[trap-diag] SHELL_RESTORE branch #");
-	trap_diag_put_hex((reg_t)trap_diag_shell_restore_count);
-	uart_puts(" (entry.S -> shell_save_cxt)\n");
+	trap_diag_user_exit_count++;
+	uart_puts("[trap-diag] USER_EXIT branch #");
+	trap_diag_put_hex((reg_t)trap_diag_user_exit_count);
+	uart_puts("\n");
 }

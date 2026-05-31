@@ -1,6 +1,7 @@
 #include "os.h"
 #include "fs.h"
 #include "syscall.h"
+#include "proc_user.h"
 #include "osviz_k.h"
 
 static int sys_open(const char *path, int flags)
@@ -36,9 +37,30 @@ static int sys_read(int fd, char *buf, int len)
 	return fs_read(fd, buf, len);
 }
 
-static int sys_fork(void)
+static int sys_fork(struct context *cxt)
 {
-	return ENOSYS;
+	int parent = proc_current_pid();
+	int child;
+
+	if (parent <= 0)
+		return ENOSYS;
+
+	child = proc_fork(parent);
+	if (child < 0)
+		return -1;
+
+	cxt->a0 = (reg_t)child;
+	osviz_event("proc", "fork", "\"parent\":1");
+	return child;
+}
+
+static int sys_waitpid(int parent, int child_wanted)
+{
+	if (parent <= 0)
+		return -1;
+	if (child_wanted <= 0)
+		return ENOSYS;
+	return proc_wait(parent, child_wanted);
 }
 
 int sys_gethid(unsigned int *ptr_hid)
@@ -53,10 +75,14 @@ void do_syscall(struct context *cxt)
 {
 	uint32_t syscall_num = (uint32_t)cxt->a7;
 	int ret = ENOSYS;
+	int pid = proc_current_pid();
 
 	switch (syscall_num) {
 	case SYS_gethid:
 		ret = sys_gethid((unsigned int *)(reg_t)cxt->a0);
+		break;
+	case SYS_getpid:
+		ret = pid > 0 ? pid : PROC_SHELL_PID;
 		break;
 	case SYS_open:
 		ret = sys_open((const char *)(reg_t)cxt->a0, (int)cxt->a1);
@@ -75,8 +101,19 @@ void do_syscall(struct context *cxt)
 		ret = 0;
 		break;
 	case SYS_fork:
-		ret = sys_fork();
-		osviz_event("proc", "fork_attempt", "\"ret\":-38");
+		ret = sys_fork(cxt);
+		break;
+	case SYS_waitpid:
+		ret = sys_waitpid(pid > 0 ? pid : PROC_SHELL_PID, (int)cxt->a0);
+		break;
+	case SYS_execve:
+		if (pid <= 0) {
+			ret = ENOSYS;
+			break;
+		}
+		ret = proc_load_elf(pid, (const char *)(reg_t)cxt->a0);
+		if (ret == 0)
+			proc_user_run(pid);
 		break;
 	case SYS_osviz_event:
 		if (cxt->a0 && cxt->a1)
@@ -95,5 +132,6 @@ void do_syscall(struct context *cxt)
 		break;
 	}
 
-	cxt->a0 = (reg_t)ret;
+	if (syscall_num != SYS_fork)
+		cxt->a0 = (reg_t)ret;
 }
