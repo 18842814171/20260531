@@ -120,9 +120,23 @@ static inline reg_t r_sepc()
 	return x;
 }
 
+static inline reg_t r_sscratch(void)
+{
+	reg_t x;
+	asm volatile("csrr %0, sscratch" : "=r" (x));
+	return x;
+}
+
 static inline void w_sscratch(reg_t x)
 {
 	asm volatile("csrw sscratch, %0" : : "r" (x));
+}
+
+static inline reg_t r_stval(void)
+{
+	reg_t x;
+	asm volatile("csrr %0, stval" : "=r" (x));
+	return x;
 }
 
 static inline void w_stvec(reg_t x)

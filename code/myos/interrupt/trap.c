@@ -3,6 +3,7 @@
 #include "osviz_k.h"
 #include "syscall.h"
 #include "trap_csr.h"
+#include "trap_diag.h"
 
 extern void trap_vector(void);
 extern void uart_isr(void);
@@ -33,7 +34,6 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 				shell_save_cxt.a0 = cxt->a0;
 				prog_exec_restore_shell = 1;
 				prog_exec_active = 0;
-				trap_use_kernel_cxt();
 				*return_pc = (reg_t)prog_exec_done;
 				osviz_event("proc", "exit", "\"from\":\"prog_exec\"");
 			} else {
@@ -61,6 +61,7 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 		osviz_event("irq", "sync_exception", d);
 		printf("Sync exception code = %ld at 0x%lx\n",
 		       (long)cause_code, (long)epc);
+		trap_diag_print_csrs("panic-sync");
 		panic("OOPS! What can I do!");
 	}
 }
@@ -108,6 +109,8 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 
 	cpu_irq_disable();
 
+	trap_diag_trap_enter(epc, cause, cxt);
+
 	if (cause & CAUSE_MASK_INTERRUPT) {
 		switch (cause_code) {
 		case TRAP_IRQ_SOFT:
@@ -141,5 +144,6 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 	if (irq_was_on)
 		cpu_irq_enable();
 
+	trap_diag_post_handler(return_pc);
 	return return_pc;
 }

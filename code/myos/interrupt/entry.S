@@ -89,6 +89,11 @@
 .globl prog_exec_restore_shell
 .globl user_cxt
 .globl shell_save_cxt
+.globl kernel_trap_cxt
+.globl trap_diag_post_handler
+.globl trap_diag_shell_restore_branch
+.globl trap_diag_print_csrs
+.globl trap_diag_trap_return
 
 	.section .rodata
 	.align 3
@@ -122,7 +127,9 @@ trap_vector:
 	csrr	a0, CSR_EPC
 	STORE	a0, 31*SIZE_REG(t5)
 
-	csrw	CSR_SCRATCH, t5
+	/* t5 = restore frame; sscratch = kernel_trap_cxt for nested traps in C. */
+	la	t0, kernel_trap_cxt
+	csrw	CSR_SCRATCH, t0
 
 	csrr	a0, CSR_EPC
 	csrr	a1, CSR_CAUSE
@@ -138,25 +145,55 @@ trap_vector:
 	la	t3, kernel_trap_sp
 	ld	sp, 0(t3)
 1:
+	addi	sp, sp, -16
+	sd	ra, 0(sp)
+	sd	t5, 8(sp)
 	call	trap_handler
+	ld	t5, 8(sp)
+	ld	ra, 0(sp)
+	addi	sp, sp, 16
 
 	csrw	CSR_EPC, a0
+
+	addi	sp, sp, -16
+	sd	ra, 0(sp)
+	sd	a0, 8(sp)
+	call	trap_diag_post_handler
+	ld	a0, 8(sp)
+	ld	ra, 0(sp)
+	addi	sp, sp, 16
 
 	la	t4, prog_exec_restore_shell
 	lw	t4, 0(t4)
 	beqz	t4, 2f
+	addi	sp, sp, -16
+	sd	ra, 0(sp)
+	call	trap_diag_shell_restore_branch
+	ld	ra, 0(sp)
+	addi	sp, sp, 16
 	la	t6, shell_save_cxt
 	j	3f
 2:
-	csrr	t6, CSR_SCRATCH
+	mv	t6, t5
 3:
+	addi	sp, sp, -32
+	sd	ra, 0(sp)
+	sd	t6, 8(sp)
+	csrr	a0, CSR_EPC
+	mv	a1, t6
+	call	trap_diag_trap_return
+	ld	t6, 8(sp)
+	ld	ra, 0(sp)
+	addi	sp, sp, 32
+	la	t0, kernel_trap_cxt
+	csrw	CSR_SCRATCH, t0
 	reg_restore t6
 
 	la	t4, prog_exec_restore_shell
-	beqz	t4, 4f
+	beqz	t4, 5f
 	la	t4, prog_exec_restore_shell
 	sw	zero, 0(t4)
-4:
+5:
 	TRAP_RET
 
 .globl switch_to

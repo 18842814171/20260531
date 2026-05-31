@@ -49,12 +49,9 @@ int prog_exec_restore_shell;
 void prog_exec_done(void);
 
 extern void switch_to(struct context *next);
+extern reg_t kernel_gp_value;
 
-static void *load_vaddr(void *file_base, uint64_t vaddr)
-{
-	(void)file_base;
-	return (void *)(unsigned long)vaddr;
-}
+#define PROG_EXEC_FRAME 112
 
 static void context_save_shell(struct context *dst, reg_t resume_pc)
 {
@@ -94,13 +91,52 @@ static void context_save_shell(struct context *dst, reg_t resume_pc)
 	dst->pc = resume_pc;
 }
 
+static void shell_cxt_clear(struct context *dst)
+{
+	int i;
+
+	for (i = 0; i < (int)(sizeof(*dst) / sizeof(reg_t)); i++)
+		((reg_t *)dst)[i] = 0;
+}
+
+/*
+ * Capture shell callee-saved state at prog_exec() entry (after the compiler
+ * prologue).  sp/s0 must be reconstructed: prog_exec nests inside shell_loop's
+ * stack frame, so raw sp/s0 here belong to prog_exec, not shell.
+ */
+static void shell_cxt_capture(reg_t console_ra, reg_t resume_pc)
+{
+	reg_t cur_sp;
+	reg_t shell_s0;
+
+	shell_cxt_clear(&shell_save_cxt);
+	context_save_shell(&shell_save_cxt, resume_pc);
+	shell_save_cxt.ra = console_ra;
+	shell_save_cxt.gp = kernel_gp_value;
+
+	asm volatile("mv %0, sp" : "=r"(cur_sp));
+	shell_s0 = *(reg_t *)(unsigned long)(cur_sp + 96);
+	shell_save_cxt.sp = cur_sp + PROG_EXEC_FRAME;
+	shell_save_cxt.s0 = shell_s0;
+}
+
+static void *load_vaddr(void *file_base, uint64_t vaddr)
+{
+	(void)file_base;
+	return (void *)(unsigned long)vaddr;
+}
+
 int prog_exec(const char *path)
 {
 	struct elf64_ehdr *eh;
 	struct elf64_phdr *ph;
 	int n, i;
 	reg_t entry;
-	register reg_t caller_ra asm("ra");
+	reg_t console_ra;
+
+	/* Capture shell context before any call clobbers callee-saved regs. */
+	asm volatile("mv %0, ra" : "=r"(console_ra));
+	shell_cxt_capture(console_ra, (reg_t)prog_exec_done);
 
 	n = fs_read_file(path, file_buf, sizeof(file_buf));
 	if (n < (int)sizeof(struct elf64_ehdr)) {
@@ -153,14 +189,10 @@ int prog_exec(const char *path)
 
 	prog_exec_active = 1;
 	prog_exec_restore_shell = 0;
-	context_save_shell(&shell_save_cxt, (reg_t)prog_exec_done);
-	shell_save_cxt.ra = caller_ra;
 	trap_use_kernel_cxt();
 	switch_to(&user_cxt);
 	return -1;
 }
-
-extern reg_t kernel_gp_value;
 
 __attribute__((naked))
 void prog_exec_done(void)

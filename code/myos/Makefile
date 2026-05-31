@@ -46,6 +46,7 @@ SRCS_C = \
 	boot/osviz_k.c \
 	boot/stats.c \
 	interrupt/trap.c \
+	interrupt/trap_diag.c \
 	interrupt/timer.c \
 	interrupt/plic.c \
 	mem/page.c \
