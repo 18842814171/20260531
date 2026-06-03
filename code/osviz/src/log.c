@@ -11,7 +11,7 @@
 
 static int ensure_log_dir(void)
 {
-	if (mkdir(OSVIZ_LOG_DIR, 0755) == 0)
+	if (mkdir( LOG_DIR, 0755) == 0)
 		return 0;
 	if (errno == EEXIST)
 		return 0;
@@ -36,7 +36,7 @@ int osviz_log_event(const char *module, const char *event, const char *json_data
 	if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
 		return -1;
 
-	fp = fopen(OSVIZ_LOG_PATH, "a");
+	fp = fopen( LOG_PATH, "a");
 	if (!fp)
 		return -1;
 

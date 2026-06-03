@@ -5,11 +5,9 @@
 
 struct context;
 
-extern struct context *user_trap_save_cxt;
-extern int proc_user_exit_pending;
-
 #define PROC_SHELL_PID  1
 #define USER_MEM_BASE   0x80380000UL
+#define USER_MEM_END    0x80400000UL
 #define USER_MEM_SIZE   0x00080000UL
 
 void proc_user_init(void);
@@ -17,6 +15,8 @@ int  proc_current_pid(void);
 void proc_set_current_pid(int pid);
 
 struct context *proc_user_trap_frame(void);
+struct context *trap_get_user_frame(reg_t kstack_top);
+void proc_enter_uspace(int pid, struct context *uc, reg_t kstack_top);
 
 int proc_load_elf(int pid, const char *path);
 int proc_user_run(int pid);

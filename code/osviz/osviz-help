@@ -5,7 +5,7 @@ Events dir:    code/osviz/events/
 Full log:      events/events.jsonl
 Auto recent:   events/recent.json  (last 10, updated live)
 Manual save:   ./osviz-save <N>    -> events/manual-<N>-<time>.jsonl
-QEMU capture:  myos/sh/start_qemu.sh  (OSVIZ_CAPTURE=n to disable)
+QEMU capture:  myos/sh/start_qemu.sh  (DEBUG=n to disable)
 
 === OSViz (Buildroot image) ===
 Events log:    /var/log/osviz/events.jsonl

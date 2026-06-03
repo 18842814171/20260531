@@ -1,4 +1,6 @@
 #include "os.h"
+#include "trap_csr.h"
+#include "trap_diag.h"
 #include "osviz_k.h"
 #include "proc.h"
 #include "proc_user.h"
@@ -184,8 +186,16 @@ static void cmd_ls(const char *path)
 
 static void cmd_pwd(void)
 {
+#ifdef CONFIG_TRAP_GP_DIAG
+	printf("[gp] pwd before: gp=0x%lx kernel_gp=0x%lx\n",
+	       (unsigned long)read_gp(), (unsigned long)kernel_gp_value);
+#endif
 	uart_puts((char *)fs_getcwd());
 	uart_putc('\n');
+#ifdef CONFIG_TRAP_GP_DIAG
+	printf("[gp] pwd after: gp=0x%lx kernel_gp=0x%lx\n",
+	       (unsigned long)read_gp(), (unsigned long)kernel_gp_value);
+#endif
 }
 
 static void cmd_cd(const char *path)
@@ -262,21 +272,56 @@ static void cmd_touch(const char *path)
 		uart_puts("touch: failed\n");
 }
 
+static reg_t shell_irq_save(void)
+{
+	reg_t s = r_sstatus();
+	cpu_irq_disable();
+	return s;
+}
+
+static void shell_irq_restore(reg_t saved)
+{
+	if (saved & SSTATUS_SIE)
+		cpu_irq_enable();
+}
+
+static int login_name_plausible(const char *line)
+{
+	int i = 0;
+
+	while (line[i]) {
+		char c = line[i];
+
+		if (c < 'a' || c > 'z')
+			return 0;
+		if (++i > 8)
+			return 0;
+	}
+	return i > 0;
+}
+
 static int login_session(void)
 {
 	char line[LINE_MAX];
 
+	uart_puts("\nUsername: root\nlogin: \n");
+	uart_rx_flush();
 	for (;;) {
-		if (uart_prompt_and_read_line("login: ", line, LINE_MAX) <= 0)
+		cpu_irq_enable();
+		if (uart_read_line(line, LINE_MAX) <= 0)
 			continue;
 		trim_line(line);
 		if (line[0] == '\0')
+			continue;
+		/* Loopback garbage: ignore silently; do NOT re-print login: (causes spam). */
+		if (!login_name_plausible(line))
 			continue;
 		if (is_poweroff_cmd(line))
 			machine_poweroff();
 		if (str_eq(line, LOGIN_USER))
 			return 0;
-		uart_puts("Login incorrect. Try again.\n");
+		uart_puts("\nLogin incorrect. Try again.\nlogin: ");
+		uart_rx_flush();
 	}
 }
 
@@ -302,6 +347,9 @@ static void shell_loop(void)
 	print_help();
 
 	for (;;) {
+		reg_t irq;
+
+		cpu_irq_enable();
 		snprintf(prompt, sizeof(prompt), "root@%s$ ", fs_getcwd());
 		if (uart_prompt_and_read_line(prompt, line, LINE_MAX) < 0)
 			continue;
@@ -309,6 +357,7 @@ static void shell_loop(void)
 		if (line[0] == '\0')
 			continue;
 
+		irq = shell_irq_save();
 		if (str_eq(line, "help") || str_eq(line, "?")) {
 			print_help();
 		} else if (str_eq(line, "logout") || str_eq(line, "exit")) {
@@ -363,6 +412,7 @@ static void shell_loop(void)
 		} else {
 			uart_puts("Unknown command. Type 'help'.\n");
 		}
+		shell_irq_restore(irq);
 	}
 }
 
@@ -370,8 +420,6 @@ void console_run(void)
 {
 	for (;;) {
 		uart_puts("\n=== myos console ===\n");
-		/* Once per session: drop -serial stdio TX loopback from boot. */
-		uart_rx_flush();
 		login_session();
 		shell_loop();
 	}

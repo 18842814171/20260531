@@ -1,5 +1,6 @@
 #include "os.h"
 #include "osviz_k.h"
+#include "config.h"
 #include "stats.h"
 #include "trap_csr.h"
 #ifdef CONFIG_OPENSBI
@@ -16,6 +17,8 @@ extern reg_t boot_dtb;
 #endif
 
 static uint64_t boot_mtime;
+
+#if CONFIG_LOG
 
 void osviz_init(void)
 {
@@ -53,12 +56,12 @@ int osviz_event(const char *module, const char *event, const char *json_data)
 	if (json_data && json_data[0] != '\0') {
 		printf("%s{\"ts_ms\":%d,\"module\":\"%s\",\"event\":\"%s\","
 		       "\"hart\":%d,\"data\":{%s}}\n",
-		       OSVIZ_PREFIX_EVENT, (int)ts_ms, module, event,
+		       LOG_PREFIX_EVENT, (int)ts_ms, module, event,
 		       (int)hart, json_data);
 	} else {
 		printf("%s{\"ts_ms\":%d,\"module\":\"%s\",\"event\":\"%s\","
 		       "\"hart\":%d}\n",
-		       OSVIZ_PREFIX_EVENT, (int)ts_ms, module, event,
+		       LOG_PREFIX_EVENT, (int)ts_ms, module, event,
 		       (int)hart);
 	}
 
@@ -83,7 +86,7 @@ int osviz_snapshot(void)
 		 (int)g_irq_stats.sw_irq, (int)g_irq_stats.ext_irq,
 		 (int)g_irq_stats.ecall_count, (int)g_irq_stats.page_fault_count);
 
-	printf("%s{%s}\n", OSVIZ_PREFIX_SNAPSHOT, buf);
+	printf("%s{%s}\n", LOG_PREFIX_SNAPSHOT, buf);
 	return 0;
 }
 
@@ -96,8 +99,38 @@ void osviz_boot_banner(void)
 	printf("  OpenSBI M→S handoff, kernel @ 0x80200000\n");
 #else
 	printf("  %s %s (RISC-V rv32, M-mode direct boot)\n", MYOS_NAME, MYOS_VERSION);
-	printf("  QEMU direct kernel @ 0x80000000\n");
+	printf("  QEMU direct kernel @ 0x80200000\n");
 #endif
 	printf("========================================\n");
 	osviz_event("boot", "banner", "\"version\":\"" MYOS_VERSION "\"");
 }
+
+#else /* CONFIG_LOG */
+
+void osviz_init(void)
+{
+}
+
+uint64_t osviz_millis(void)
+{
+	return 0;
+}
+
+int osviz_event(const char *module, const char *event, const char *json_data)
+{
+	(void)module;
+	(void)event;
+	(void)json_data;
+	return 0;
+}
+
+int osviz_snapshot(void)
+{
+	return 0;
+}
+
+void osviz_boot_banner(void)
+{
+}
+
+#endif /* CONFIG_LOG */

@@ -1,6 +1,8 @@
 #include "os.h"
 #include "proc.h"
 
+extern reg_t kernel_gp_value;
+
 static struct {
 	int pid;
 	int ppid;
@@ -8,6 +10,10 @@ static struct {
 	char name[PROC_NAME_LEN];
 	void (*entry)(void);
 	int task_idx;
+	struct context user_ctx;
+	reg_t run_saved_ra;
+	reg_t run_saved_sp;
+	uint8_t kstack[PROC_KSTACK_SIZE] __attribute__((aligned(16)));
 } procs[PROC_MAX];
 
 static int proc_top = 1; /* pid 0 = kernel */
@@ -23,6 +29,8 @@ void proc_init(void)
 		procs[i].name[0] = '\0';
 		procs[i].entry = NULL;
 		procs[i].task_idx = -1;
+		procs[i].run_saved_ra = 0;
+		procs[i].run_saved_sp = 0;
 	}
 
 	procs[0].pid = 0;
@@ -52,6 +60,8 @@ int proc_alloc(const char *name, int ppid)
 		procs[i].state = PROC_READY;
 		procs[i].entry = NULL;
 		procs[i].task_idx = -1;
+		procs[i].run_saved_ra = 0;
+		procs[i].run_saved_sp = 0;
 		procs[i].name[0] = '\0';
 		if (name) {
 			for (j = 0; name[j] && j < PROC_NAME_LEN - 1; j++)
@@ -137,6 +147,78 @@ int proc_list(struct proc_info *out, int max)
 void proc_mark_zombie(int pid)
 {
 	proc_set_state(pid, PROC_ZOMBIE);
+}
+
+struct context *proc_user_ctx(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return NULL;
+	return &procs[slot].user_ctx;
+}
+
+struct context *proc_user_ctx_by_kstack_top(reg_t kstack_top)
+{
+	int i;
+
+	for (i = 0; i < PROC_MAX; i++) {
+		if (procs[i].state == PROC_UNUSED)
+			continue;
+		if ((reg_t)&procs[i].kstack[PROC_KSTACK_SIZE] == kstack_top)
+			return &procs[i].user_ctx;
+	}
+	return NULL;
+}
+
+reg_t proc_kstack_top(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return 0;
+	return (reg_t)&procs[slot].kstack[PROC_KSTACK_SIZE];
+}
+
+reg_t proc_run_saved_ra(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return 0;
+	return procs[slot].run_saved_ra;
+}
+
+reg_t proc_run_saved_sp(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return 0;
+	return procs[slot].run_saved_sp;
+}
+
+void proc_save_run_caller(int pid, reg_t ra, reg_t sp)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return;
+	procs[slot].run_saved_ra = ra;
+	procs[slot].run_saved_sp = sp;
+}
+
+void proc_prepare_kernel_return(struct context *cxt, int pid)
+{
+	reg_t ra = proc_run_saved_ra(pid);
+	reg_t sp = proc_run_saved_sp(pid);
+
+	if (!cxt || !ra)
+		return;
+	cxt->pc = ra;
+	cxt->sp = sp;
+	cxt->ra = ra;
+	cxt->gp = kernel_gp_value;
 }
 
 extern int task_create(void (*start)(void));

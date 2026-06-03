@@ -22,6 +22,12 @@ _start:
 
 	li	sp, 0x80210000
 
+	/* P0: gp must be valid before any C code (trap_init captures kernel_gp). */
+.option push
+.option norelax
+	la	gp, __global_pointer$
+.option pop
+
 	# Clear BSS (must run before C; boot_hartid/boot_dtb live in .bss)
 	la	t0, _bss_start
 	la	t1, _bss_end
@@ -53,6 +59,11 @@ _start:
 	slli	t0, t0, 10
 	la	sp, stacks + STACK_SIZE
 	add	sp, sp, t0
+
+.option push
+.option norelax
+	la	gp, __global_pointer$
+.option pop
 
 #ifdef CONFIG_SYSCALL
 	li      t0, 0xffffffff

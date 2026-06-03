@@ -41,30 +41,36 @@ struct elf64_phdr {
 
 static char file_buf[FS_MAX_SIZE];
 
-static struct context uctx_table[PROC_MAX];
 static int exit_status[PROC_MAX];
 static int fork_child_pending = -1;
-
 static int current_pid = PROC_SHELL_PID;
-struct context *user_trap_save_cxt;
 
-static reg_t user_kernel_ra;
-static reg_t user_kernel_sp;
-
-int proc_user_exit_pending;
-struct context kernel_user_exit_cxt;
-
-extern void switch_to(struct context *next);
-extern reg_t kernel_gp_value;
+extern struct context kernel_trap_cxt;
+extern void enter_uspace(struct context *uc, reg_t kstack_top);
 
 static int pid_to_slot(int pid)
 {
 	return proc_slot_by_pid(pid);
 }
 
+struct context *trap_get_user_frame(reg_t kstack_top)
+{
+	struct context *c = proc_user_ctx_by_kstack_top(kstack_top);
+
+	return c ? c : &kernel_trap_cxt;
+}
+
+void proc_enter_uspace(int pid, struct context *uc, reg_t kstack_top)
+{
+	printf("about to sret child=%d sscratch=0x%lx sepc=0x%lx\n",
+	       pid, (unsigned long)kstack_top, (unsigned long)uc->pc);
+	current_pid = pid;
+	enter_uspace(uc, kstack_top);
+}
+
 struct context *proc_user_trap_frame(void)
 {
-	return user_trap_save_cxt;
+	return proc_user_ctx(proc_current_pid());
 }
 
 int proc_current_pid(void)
@@ -84,20 +90,10 @@ void proc_user_init(void)
 	for (i = 0; i < PROC_MAX; i++)
 		exit_status[i] = 0;
 	fork_child_pending = -1;
-	proc_user_exit_pending = 0;
-	user_trap_save_cxt = NULL;
 	current_pid = PROC_SHELL_PID;
+	trap_scratch_init(0);
 	if (proc_slot_by_pid(PROC_SHELL_PID) < 0)
 		proc_alloc("shell", 0);
-}
-
-static struct context *uctx_for_pid(int pid)
-{
-	int slot = pid_to_slot(pid);
-
-	if (slot < 0)
-		return NULL;
-	return &uctx_table[slot];
 }
 
 static void uctx_clear(struct context *c)
@@ -116,15 +112,11 @@ static void uctx_copy(struct context *dst, const struct context *src)
 		((reg_t *)dst)[i] = ((const reg_t *)src)[i];
 }
 
-static void user_mem_copy(int child_pid, int parent_pid)
+static void addrspace_clone(int child_pid, int parent_pid)
 {
-	char *dst = (char *)USER_MEM_BASE;
-	char *src = (char *)USER_MEM_BASE;
 	(void)child_pid;
 	(void)parent_pid;
 	/* Flat address space: fork duplicates trap frame only for now. */
-	(void)dst;
-	(void)src;
 }
 
 int proc_load_elf(int pid, const char *path)
@@ -170,7 +162,7 @@ int proc_load_elf(int pid, const char *path)
 	asm volatile("fence.i" ::: "memory");
 	entry = (reg_t)eh->e_entry;
 
-	uc = uctx_for_pid(pid);
+	uc = proc_user_ctx(pid);
 	if (!uc)
 		return -1;
 	uctx_clear(uc);
@@ -180,22 +172,25 @@ int proc_load_elf(int pid, const char *path)
 	{
 		const char *p = path;
 		int j = 0;
+
 		while (p[j] && j < PROC_NAME_LEN - 1) {
-			if (p[j] == '/')
-				{
-					int k = j + 1;
-					int t = 0;
-					while (p[k] && t < PROC_NAME_LEN - 1)
-						name[t++] = p[k++];
-					name[t] = '\0';
-					break;
-				}
+			if (p[j] == '/') {
+				int k = j + 1;
+				int t = 0;
+
+				while (p[k] && t < PROC_NAME_LEN - 1)
+					name[t++] = p[k++];
+				name[t] = '\0';
+				break;
+			}
 			j++;
 		}
 		if (name[0] == '\0') {
 			j = 0;
-			while (path[j] && j < PROC_NAME_LEN - 1)
-				name[j++] = path[j];
+			while (path[j] && j < PROC_NAME_LEN - 1) {
+				name[j] = path[j];
+				j++;
+			}
 			name[j] = '\0';
 		}
 	}
@@ -206,44 +201,25 @@ int proc_load_elf(int pid, const char *path)
 	return 0;
 }
 
-__attribute__((naked))
-void user_exit_trampoline(void)
-{
-	asm volatile(
-		"mv gp, %0\n"
-		"mv sp, %1\n"
-		"jr %2\n"
-		:
-		: "r"(kernel_gp_value), "r"(user_kernel_sp), "r"(user_kernel_ra)
-		: "memory");
-}
-
-static void proc_user_prepare_kernel_return(void)
-{
-	kernel_user_exit_cxt.pc = (reg_t)user_exit_trampoline;
-	kernel_user_exit_cxt.sp = user_kernel_sp;
-	kernel_user_exit_cxt.ra = user_kernel_ra;
-	kernel_user_exit_cxt.gp = kernel_gp_value;
-}
-
 int proc_user_run(int pid)
 {
-	struct context *uc = uctx_for_pid(pid);
+	struct context *uc = proc_user_ctx(pid);
+	reg_t ktop = proc_kstack_top(pid);
+	reg_t saved_ra, saved_sp;
 
-	if (!uc)
+	if (!uc || !ktop)
 		return -1;
 
-	asm volatile("mv %0, ra" : "=r"(user_kernel_ra));
-	asm volatile("mv %0, sp" : "=r"(user_kernel_sp));
+	printf("proc_user_run begin child=%d current=%d\n", pid, current_pid);
 
-	current_pid = pid;
-	user_trap_save_cxt = uc;
+	asm volatile("mv %0, ra" : "=r"(saved_ra));
+	asm volatile("mv %0, sp" : "=r"(saved_sp));
+	proc_save_run_caller(pid, saved_ra, saved_sp);
+
 	proc_set_state(pid, PROC_RUNNING);
-	proc_user_exit_pending = 0;
-	trap_use_kernel_cxt();
-	switch_to(uc);
+	proc_enter_uspace(pid, uc, ktop);
 
-	user_trap_save_cxt = NULL;
+	trap_scratch_init(0);
 	current_pid = PROC_SHELL_PID;
 	return 0;
 }
@@ -257,9 +233,6 @@ void proc_user_exit(int pid, int status)
 
 	exit_status[slot] = status;
 	proc_mark_zombie(pid);
-	proc_user_prepare_kernel_return();
-	proc_user_exit_pending = 1;
-	user_trap_save_cxt = &kernel_user_exit_cxt;
 }
 
 int proc_fork(int parent_pid)
@@ -278,10 +251,13 @@ int proc_fork(int parent_pid)
 	if (parent_slot < 0 || child_slot < 0)
 		return -1;
 
-	parent_uc = &uctx_table[parent_slot];
-	child_uc = &uctx_table[child_slot];
+	parent_uc = proc_user_ctx(parent_pid);
+	child_uc = proc_user_ctx(child_pid);
+	if (!parent_uc || !child_uc)
+		return -1;
 	uctx_copy(child_uc, parent_uc);
-	user_mem_copy(child_pid, parent_pid);
+	child_uc->a0 = 0;
+	addrspace_clone(child_pid, parent_pid);
 	proc_set_state(child_pid, PROC_READY);
 	fork_child_pending = child_pid;
 	return child_pid;
@@ -296,6 +272,7 @@ int proc_wait(int parent_pid, int child_pid)
 
 	if (fork_child_pending > 0 && fork_child_pending == child_pid) {
 		int cp = fork_child_pending;
+
 		fork_child_pending = -1;
 		proc_user_run(cp);
 	}
@@ -308,6 +285,7 @@ int proc_wait(int parent_pid, int child_pid)
 			if (list[i].state == PROC_ZOMBIE) {
 				int slot = pid_to_slot(child_pid);
 				int st = (slot >= 0) ? exit_status[slot] : 0;
+
 				proc_set_state(child_pid, PROC_UNUSED);
 				return st;
 			}

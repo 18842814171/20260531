@@ -4,8 +4,8 @@
 
 set -e
 
-OSVIZ_DIR="/var/log/osviz"
-SNAP_DIR="${OSVIZ_DIR}/snapshots"
+LOG_DIR="/var/log/osviz"
+SNAP_DIR="${LOG_DIR}/snapshots"
 EXTRA_PID=""
 
 if [ "$1" = "--pid" ] && [ -n "$2" ]; then

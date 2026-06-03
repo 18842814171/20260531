@@ -1,0 +1,17 @@
+# GDB init for myos on QEMU riscv64 virt + OpenSBI
+# Used by sh/debug.sh (target remote is set by the script).
+
+set architecture riscv:rv64
+set disassemble-next-line on
+set print pretty on
+
+# OpenSBI runs first; break when the kernel C entry runs.
+break start_kernel
+
+# Uncomment for user-mode / trap debugging:
+# break proc_user_run
+# break enter_uspace
+# break trap_vector
+# break trap_handler
+
+continue

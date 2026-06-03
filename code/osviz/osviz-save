@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Save last N OSVIZ events: ./osviz-save <N>"""
+"""Save last N LOG events: ./osviz-save <N>"""
 
 import sys
 from datetime import datetime
 from pathlib import Path
 
-OSVIZ_ROOT = Path(__file__).resolve().parent
-EVENTS_DIR = OSVIZ_ROOT / "events"
+LOG_ROOT = Path(__file__).resolve().parent
+EVENTS_DIR = LOG_ROOT / "events"
 JSONL = EVENTS_DIR / "events.jsonl"
 
 
@@ -20,7 +20,7 @@ def main():
     n = int(sys.argv[1])
     if not JSONL.is_file():
         print(f"error: 没有日志文件 {JSONL}", file=sys.stderr)
-        print("hint: 先通过 serial_reader 或带 OSVIZ 的 QEMU 产生事件", file=sys.stderr)
+        print("hint: 先通过 serial_reader 或带 LOG 的 QEMU 产生事件", file=sys.stderr)
         sys.exit(1)
 
     lines = [ln for ln in JSONL.read_text(encoding="utf-8").splitlines() if ln.strip()]

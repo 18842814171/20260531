@@ -5,8 +5,8 @@
 set -euo pipefail
 
 MYOS_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OSVIZ_ROOT="$(cd "${MYOS_ROOT}/../osviz" && pwd)"
-SERIAL_READER="${OSVIZ_ROOT}/bridge/serial_reader.py"
+LOG_ROOT="$(cd "${MYOS_ROOT}/../osviz" && pwd)"
+SERIAL_READER="${LOG_ROOT}/bridge/serial_reader.py"
 KERNEL="${1:-${MYOS_KERNEL:-${MYOS_ROOT}/out/os}}"
 FW="${OPENSBI_FW:-${MYOS_ROOT}/firmware/fw_jump}"
 
@@ -33,20 +33,31 @@ if [[ ! -f "${KERNEL}" ]]; then
 	exit 1
 fi
 
+# Interactive: direct QEMU on the terminal (keyboard + Ctrl+C work).
+# Non-interactive (CI/scripts): pipe stdout into osviz capture.
+if [[ -t 0 ]]; then
+	DEBUG="${DEBUG:-n}"
+else
+	DEBUG="${DEBUG:-y}"
+fi
+
 run_qemu() {
 	echo "myos QEMU"
 	echo "  kernel: ${KERNEL}"
-	if [[ "${OSVIZ_CAPTURE:-y}" != "n" && -f "${SERIAL_READER}" ]]; then
-		echo "  osviz:  ${OSVIZ_ROOT}/events/ (auto recent 10)"
+	if [[ "${DEBUG}" != "n" && -f "${SERIAL_READER}" ]]; then
+		echo "  osviz:  ${LOG_ROOT}/events/ (capture only, not for typing)"
 	fi
-	echo "  quit:   Ctrl+C  (stops QEMU)"
+	echo "  quit:   Ctrl+C"
 	echo "          poweroff at login: or myos>"
+	if [[ "${DEBUG}" == "n" ]]; then
+		echo "  mode:   interactive (-serial stdio)"
+	fi
 	echo "------------------------------------"
 	if [[ -t 0 ]]; then
-		stty -icanon -echo min 1 time 0 2>/dev/null || true
+		stty icanon echo 2>/dev/null || true
 		trap 'stty sane 2>/dev/null || true' EXIT INT TERM
 	fi
-	if [[ "${OSVIZ_CAPTURE:-y}" != "n" && -f "${SERIAL_READER}" ]]; then
+	if [[ "${DEBUG}" != "n" && -f "${SERIAL_READER}" ]]; then
 		"${QEMU}" "$@" 2>&1 | python3 "${SERIAL_READER}"
 	else
 		exec "${QEMU}" "$@"

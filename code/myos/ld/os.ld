@@ -108,6 +108,8 @@ SECTIONS
 		 */
 		. = ALIGN(4096);
 		PROVIDE(_data_start = .);
+		/* RISC-V gp-relative addressing: ±2 KiB from __global_pointer$. */
+		PROVIDE(__global_pointer$ = . + 0x800);
 		/*
 		 * sdata and data are essentially the same thing. We do not need
 		 * to distinguish sdata from data.

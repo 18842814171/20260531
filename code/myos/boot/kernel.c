@@ -13,6 +13,9 @@ extern void plic_init(void);
 extern void timer_init(void);
 extern void fs_init(void);
 extern void console_run(void);
+#ifdef CONFIG_UART_LSR_DIAG
+extern void uart_lsr_diag(void);
+#endif
 
 extern ptr_t BSS_START;
 extern ptr_t BSS_END;
@@ -108,6 +111,11 @@ void start_kernel(void)
 	cpu_irq_enable();
 
 	uart_puts("Hello, RVOS!\n");
+#ifdef CONFIG_UART_LSR_DIAG
+	uart_lsr_diag();
+#else
 	uart_puts("\nSystem ready. Log in at the prompt below.\n");
+	uart_rx_flush_deep();
 	console_run();
+#endif
 }
