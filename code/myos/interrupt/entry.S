@@ -92,6 +92,7 @@
 
 .globl trap_vector
 .globl trap_reenable_irq
+.globl trap_return_to_user
 .globl kernel_trap_busy
 .globl trap_nested_timer_ack
 .globl kernel_trap_cxt
@@ -106,6 +107,11 @@
 	.text
 .balign 4
 trap_vector:
+	.option push
+	.option norelax
+	la	t0, kernel_gp_value
+	.option pop
+	LOAD	gp, 0(t0)
 	mv	t3, t6
 	la	t4, kernel_trap_busy
 	lw	t2, 0(t4)
@@ -159,7 +165,10 @@ trap_vector:
 	mv	t2, sp
 	addi	sp, sp, -16
 	sd	ra, 0(sp)
+	.option push
+	.option norelax
 	la	t0, kernel_gp_value
+	.option pop
 	LOAD	gp, 0(t0)
 	mv	a0, t2
 	call	trap_get_user_frame
@@ -226,19 +235,43 @@ trap_vector:
 
 	reg_restore t6
 
-	la	t4, trap_reenable_irq
-	lw	t4, 0(t4)
-	beqz	t4, 6f
+	la	t4, trap_return_to_user
+	lw	t5, 0(t4)
 	sw	zero, 0(t4)
+	beqz	t5, 6f
+	addi	sp, sp, -16
+	sd	ra, 0(sp)
+	.option push
+	.option norelax
+	la	t0, kernel_gp_value
+	.option pop
+	LOAD	gp, 0(t0)
+	call	proc_current_kstack_top
+	ld	ra, 0(sp)
+	addi	sp, sp, 16
 	li	t0, SIE_MASK
+	csrc	CSR_STATUS, t0
+#ifdef CONFIG_OPENSBI
+	li	t0, SPP_MASK
+	csrc	CSR_STATUS, t0
+	li	t0, SPIE_MASK
 	csrs	CSR_STATUS, t0
+#endif
+	csrw	CSR_SCRATCH, a0
+	la	t4, trap_reenable_irq
+	lw	t5, 0(t4)
+	beqz	t5, 7f
+	sw	zero, 0(t4)
+7:
+	j	8f
 6:
+	csrw	CSR_SCRATCH, zero
+8:
 	la	t4, kernel_trap_busy
 	sw	zero, 0(t4)
 	TRAP_RET
 
 .globl enter_uspace
-.globl uart_putc
 .balign 4
 enter_uspace:
 	/* a0 = user context, a1 = kstack_top. Set sscratch before reg_restore (a1 is clobbered). */
@@ -255,12 +288,6 @@ enter_uspace:
 	li	t0, SPIE_MASK
 	csrs	CSR_STATUS, t0
 #endif
-	addi	sp, sp, -16
-	sd	ra, 0(sp)
-	li	a0, '>'
-	call	uart_putc
-	ld	ra, 0(sp)
-	addi	sp, sp, 16
 	TRAP_RET
 
 .globl switch_to

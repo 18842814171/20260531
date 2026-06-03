@@ -15,6 +15,9 @@ DEFS += -DCONFIG_LOG=0
 else
 DEFS += -DCONFIG_LOG=1
 endif
+ifdef AUTORUN
+DEFS += -DCONFIG_AUTORUN=\"$(AUTORUN)\"
+endif
 
 ARCH_CFLAGS := -march=rv64gc -mabi=lp64 -mcmodel=medany
 CFLAGS := -nostdlib -fno-builtin -g -Wall $(ARCH_CFLAGS) -I include
@@ -34,9 +37,16 @@ OBJS_ASM := $(patsubst %.S,$(OUTPUT_PATH)/%,$(SRCS_ASM))
 OBJS_C := $(patsubst %.c,$(OUTPUT_PATH)/%,$(SRCS_C))
 OBJS := $(OBJS_ASM) $(OBJS_C)
 
-.PHONY: all clean
+.PHONY: all clean userprogs
 
-all: $(HOME_DATA) $(OUTPUT_PATH) $(KERNEL)
+all: userprogs $(HOME_DATA) $(OUTPUT_PATH) $(KERNEL)
+
+# Cross-compile guest ELFs in home/root/*.c → home/root/<name> (not done by gcc -c rules).
+userprogs:
+	@for f in home/root/*.c; do \
+		[ -f "$$f" ] || continue; \
+		./usr/compile.sh c "$$(basename "$$f")" || exit 1; \
+	done
 
 $(HOME_DATA): home/root/*
 	python3 tools/pack_home.py

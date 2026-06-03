@@ -62,8 +62,6 @@ struct context *trap_get_user_frame(reg_t kstack_top)
 
 void proc_enter_uspace(int pid, struct context *uc, reg_t kstack_top)
 {
-	printf("about to sret child=%d sscratch=0x%lx sepc=0x%lx\n",
-	       pid, (unsigned long)kstack_top, (unsigned long)uc->pc);
 	current_pid = pid;
 	enter_uspace(uc, kstack_top);
 }
@@ -76,6 +74,11 @@ struct context *proc_user_trap_frame(void)
 int proc_current_pid(void)
 {
 	return current_pid;
+}
+
+reg_t proc_current_kstack_top(void)
+{
+	return proc_kstack_top(proc_current_pid());
 }
 
 void proc_set_current_pid(int pid)
@@ -203,22 +206,25 @@ int proc_load_elf(int pid, const char *path)
 
 int proc_user_run(int pid)
 {
-	struct context *uc = proc_user_ctx(pid);
-	reg_t ktop = proc_kstack_top(pid);
-	reg_t saved_ra, saved_sp;
-
-	if (!uc || !ktop)
-		return -1;
-
-	printf("proc_user_run begin child=%d current=%d\n", pid, current_pid);
+	struct context *uc;
+	reg_t ktop;
+	reg_t saved_ra, saved_sp, saved_s0;
 
 	asm volatile("mv %0, ra" : "=r"(saved_ra));
 	asm volatile("mv %0, sp" : "=r"(saved_sp));
-	proc_save_run_caller(pid, saved_ra, saved_sp);
+	asm volatile("mv %0, s0" : "=r"(saved_s0));
+
+	uc = proc_user_ctx(pid);
+	ktop = proc_kstack_top(pid);
+	if (!uc || !ktop)
+		return -1;
+
+	proc_save_run_caller(pid, saved_ra, saved_sp, saved_s0);
 
 	proc_set_state(pid, PROC_RUNNING);
+	proc_save_run_cont(pid, (reg_t)&&after_uspace);
 	proc_enter_uspace(pid, uc, ktop);
-
+after_uspace:
 	trap_scratch_init(0);
 	current_pid = PROC_SHELL_PID;
 	return 0;
@@ -284,8 +290,10 @@ int proc_wait(int parent_pid, int child_pid)
 				continue;
 			if (list[i].state == PROC_ZOMBIE) {
 				int slot = pid_to_slot(child_pid);
-				int st = (slot >= 0) ? exit_status[slot] : 0;
+				int st = 0;
 
+				if (slot >= 0)
+					st = exit_status[slot];
 				proc_set_state(child_pid, PROC_UNUSED);
 				return st;
 			}
@@ -297,6 +305,7 @@ int proc_wait(int parent_pid, int child_pid)
 int proc_spawn_exec_wait(const char *path)
 {
 	int child;
+	int wait_st;
 	const char *base;
 	char name[PROC_NAME_LEN];
 	int j;
@@ -324,7 +333,8 @@ int proc_spawn_exec_wait(const char *path)
 	}
 
 	proc_user_run(child);
-	return proc_wait(PROC_SHELL_PID, child);
+	wait_st = proc_wait(PROC_SHELL_PID, child);
+	return wait_st;
 }
 
 int prog_is_elf_path(const char *path)

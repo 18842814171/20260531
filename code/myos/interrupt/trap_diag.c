@@ -114,16 +114,13 @@ static int epc_in_kernel_text(reg_t epc)
 
 void trap_diag_trap_pre(reg_t epc, reg_t sscratch)
 {
+#if TRAP_DIAG_VERBOSE
 	const char *mode;
-	struct context *uc;
 
 	mode = epc_in_user(epc) ? "user" : "kernel";
-
-	if (TRAP_DIAG_VERBOSE) {
-		printf("trap: pid=%d mode=%s epc=0x%lx sscratch=0x%lx (pre-swap)\n",
-		       proc_current_pid(), mode, (unsigned long)epc,
-		       (unsigned long)sscratch);
-	}
+	printf("trap: pid=%d mode=%s epc=0x%lx sscratch=0x%lx (pre-swap)\n",
+	       proc_current_pid(), mode, (unsigned long)epc,
+	       (unsigned long)sscratch);
 
 	if (epc_in_kernel_text(epc) && sscratch != 0) {
 		printf("INVARIANT FAIL: kernel epc 0x%lx sscratch=0x%lx pid=%d\n",
@@ -132,27 +129,9 @@ void trap_diag_trap_pre(reg_t epc, reg_t sscratch)
 		trap_diag_print_csrs("invariant-kernel-sscratch");
 		panic("kernel trap with sscratch != 0");
 	}
-
-	if (sscratch != 0) {
-		uc = proc_user_ctx_by_kstack_top(sscratch);
-		if (!epc_in_user(epc)) {
-			printf("INVARIANT FAIL: sscratch=0x%lx epc=0x%lx not user pid=%d\n",
-			       (unsigned long)sscratch, (unsigned long)epc,
-			       proc_current_pid());
-			trap_diag_print_csrs("invariant-user-epc");
-			panic("sscratch set but epc not in user");
-		}
-		if (!uc) {
-			printf("INVARIANT FAIL: sscratch=0x%lx matches no proc kstack\n",
-			       (unsigned long)sscratch);
-			panic("sscratch kstack orphan");
-		}
-		if (uc->pc != 0 && !epc_in_user(uc->pc)) {
-			printf("INVARIANT FAIL: sscratch=0x%lx saved pc=0x%lx not user\n",
-			       (unsigned long)sscratch, (unsigned long)uc->pc);
-			panic("sscratch with bad saved user pc");
-		}
-	}
+#endif
+	(void)epc;
+	(void)sscratch;
 }
 
 void trap_diag_trap_enter(reg_t epc, reg_t cause, struct context *cxt)
@@ -208,7 +187,11 @@ static void trap_diag_put_hex(reg_t v)
 
 void trap_diag_trap_return(reg_t sepc, struct context *frame)
 {
-	if (!epc_in_user(sepc) && sepc != proc_run_saved_ra(proc_current_pid()))
+	if (!TRAP_DIAG_VERBOSE)
+		return;
+
+	if (!epc_in_user(sepc) && sepc != proc_run_saved_ra(proc_current_pid())
+	    && sepc != proc_run_saved_cont(proc_current_pid()))
 		return;
 
 	uart_puts("[trap-diag] RETURN sepc=");

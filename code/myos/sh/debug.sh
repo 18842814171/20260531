@@ -80,6 +80,14 @@ echo "------------------------------------"
 echo "QEMU starts frozen (-S). GDB will connect and continue to start_kernel."
 echo "Quit GDB with 'quit' to stop QEMU."
 echo
+echo "Tip: non-interactive user-program debug (no login):"
+echo "  make AUTORUN=return0 && ./sh/debug.sh"
+echo "  (gdb) break proc_user_run"
+echo "  (gdb) continue"
+echo
+echo "Tip: start QEMU in another terminal if 'target remote' times out:"
+echo "  qemu-system-riscv64 ... -S -gdb tcp::1234 -bios firmware/fw_jump -kernel out/os"
+echo
 
 # Do not pipe through serial_reader — GDB needs a clean stdio path.
 "${QEMU}" "${QEMU_ARGS[@]}" &

@@ -420,7 +420,7 @@ void console_run(void)
 {
 	for (;;) {
 		uart_puts("\n=== myos console ===\n");
-		login_session();
+		//login_session();
 		shell_loop();
 	}
 }

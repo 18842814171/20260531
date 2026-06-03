@@ -13,6 +13,8 @@ static struct {
 	struct context user_ctx;
 	reg_t run_saved_ra;
 	reg_t run_saved_sp;
+	reg_t run_saved_s0;
+	reg_t run_saved_cont;
 	uint8_t kstack[PROC_KSTACK_SIZE] __attribute__((aligned(16)));
 } procs[PROC_MAX];
 
@@ -31,6 +33,7 @@ void proc_init(void)
 		procs[i].task_idx = -1;
 		procs[i].run_saved_ra = 0;
 		procs[i].run_saved_sp = 0;
+		procs[i].run_saved_cont = 0;
 	}
 
 	procs[0].pid = 0;
@@ -62,6 +65,7 @@ int proc_alloc(const char *name, int ppid)
 		procs[i].task_idx = -1;
 		procs[i].run_saved_ra = 0;
 		procs[i].run_saved_sp = 0;
+		procs[i].run_saved_cont = 0;
 		procs[i].name[0] = '\0';
 		if (name) {
 			for (j = 0; name[j] && j < PROC_NAME_LEN - 1; j++)
@@ -198,7 +202,25 @@ reg_t proc_run_saved_sp(int pid)
 	return procs[slot].run_saved_sp;
 }
 
-void proc_save_run_caller(int pid, reg_t ra, reg_t sp)
+reg_t proc_run_saved_s0(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return 0;
+	return procs[slot].run_saved_s0;
+}
+
+reg_t proc_run_saved_cont(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return 0;
+	return procs[slot].run_saved_cont;
+}
+
+void proc_save_run_caller(int pid, reg_t ra, reg_t sp, reg_t s0)
 {
 	int slot = proc_slot_by_pid(pid);
 
@@ -206,19 +228,34 @@ void proc_save_run_caller(int pid, reg_t ra, reg_t sp)
 		return;
 	procs[slot].run_saved_ra = ra;
 	procs[slot].run_saved_sp = sp;
+	procs[slot].run_saved_s0 = s0;
+}
+
+void proc_save_run_cont(int pid, reg_t cont)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return;
+	procs[slot].run_saved_cont = cont;
 }
 
 void proc_prepare_kernel_return(struct context *cxt, int pid)
 {
+	reg_t cont = proc_run_saved_cont(pid);
 	reg_t ra = proc_run_saved_ra(pid);
 	reg_t sp = proc_run_saved_sp(pid);
+	reg_t s0 = proc_run_saved_s0(pid);
+	reg_t pc;
 
 	if (!cxt || !ra)
 		return;
-	cxt->pc = ra;
+	pc = cont ? cont : ra;
+	cxt->pc = pc;
 	cxt->sp = sp;
 	cxt->ra = ra;
 	cxt->gp = kernel_gp_value;
+	cxt->s0 = s0;
 }
 
 extern int task_create(void (*start)(void));

@@ -3,6 +3,7 @@
 #include "proc_user.h"
 #include "osviz_k.h"
 #include "trap_csr.h"
+#include "config.h"
 
 extern void uart_init(void);
 extern void page_init(void);
@@ -113,6 +114,9 @@ void start_kernel(void)
 	uart_puts("Hello, RVOS!\n");
 #ifdef CONFIG_UART_LSR_DIAG
 	uart_lsr_diag();
+#elif defined(CONFIG_AUTORUN)
+	uart_puts("\nSystem ready (AUTORUN=" CONFIG_AUTORUN ").\n");
+	debug_autorun_user_and_exit(CONFIG_AUTORUN);
 #else
 	uart_puts("\nSystem ready. Log in at the prompt below.\n");
 	uart_rx_flush_deep();

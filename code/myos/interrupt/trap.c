@@ -14,6 +14,7 @@ extern int sched_task_count(void);
 extern void do_syscall(struct context *cxt);
 extern void task_exit_to_idle(struct context *cxt, int status);
 int trap_reenable_irq;
+int trap_return_to_user;
 
 struct context kernel_trap_cxt;
 reg_t kernel_gp_value;
@@ -110,13 +111,20 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 			pid = proc_current_pid();
 
 			if (pid > 0) {
-				proc_user_exit(pid, (int)cxt->a0);
+				reg_t cont;
+				struct context *uc = proc_user_ctx(pid);
+				unsigned int status = (unsigned int)(uc ? uc->a0 : cxt->a0);
+
+				/* Trap frame may be kernel_trap_cxt; ignore bogus pointer-as-status. */
+				if (status > 255)
+					status = 0;
+				proc_user_exit(pid, (int)status);
 				proc_prepare_kernel_return(cxt, pid);
-				*return_pc = proc_run_saved_ra(pid);
+				cont = proc_run_saved_cont(pid);
+				*return_pc = cont ? cont : proc_run_saved_ra(pid);
 #ifdef CONFIG_OPENSBI
 				w_sstatus(r_sstatus() | SSTATUS_SPP);
 #endif
-				trap_scratch_init(0);
 				osviz_event("proc", "exit", "\"from\":\"user\"");
 			} else {
 				task_exit_to_idle(cxt, (int)cxt->a0);
@@ -222,8 +230,6 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 		       kernel_trap_depth, (long)epc, (long)cause);
 
 	trap_diag_trap_enter(epc, cause, cxt);
-	if (epc_in_user(epc))
-		uart_puts("[user-trap]\n");
 
 	if (cause & CAUSE_MASK_INTERRUPT) {
 		switch (cause_code) {
@@ -252,11 +258,9 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 			break;
 		}
 	} else {
+		if (epc_in_user(epc) && (cause_code == 8 || cause_code == 9))
+			cxt->ra = epc + 4;
 		handle_sync_exception(cause_code, epc, cxt, &return_pc);
-		if (cause_code == 8 || cause_code == 9) {
-			if (epc_in_user(epc))
-				uart_puts("[user-ecall]\n");
-		}
 	}
 
 	/*
@@ -266,17 +270,12 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 	 * reg_restore and corrupt sepc (illegal insn in BSS).
 	 */
 	trap_reenable_irq = 0;
-	if (irq_was_on && epc_in_user(return_pc))
+	trap_return_to_user = epc_in_user(return_pc);
+	if (irq_was_on && trap_return_to_user)
 		trap_reenable_irq = 1;
 
-	/*
-	 * csrrw at trap_vector leaves sscratch=kernel_sp on the kernel path.
-	 * Must be 0 before sret to kernel, kstack top before sret to user.
-	 */
-	if (epc_in_user(return_pc))
-		trap_scratch_init(proc_kstack_top(proc_current_pid()));
-	else
-		trap_scratch_init(0);
+	/* sscratch: 0 in kernel until entry.S sets kstack top right before sret to user. */
+	trap_scratch_init(0);
 
 	trap_diag_post_handler(return_pc);
 

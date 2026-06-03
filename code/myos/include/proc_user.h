@@ -12,6 +12,7 @@ struct context;
 
 void proc_user_init(void);
 int  proc_current_pid(void);
+reg_t proc_current_kstack_top(void);
 void proc_set_current_pid(int pid);
 
 struct context *proc_user_trap_frame(void);

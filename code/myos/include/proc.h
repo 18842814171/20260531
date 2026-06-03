@@ -40,7 +40,10 @@ struct context *proc_user_ctx_by_kstack_top(reg_t kstack_top);
 reg_t proc_kstack_top(int pid);
 reg_t proc_run_saved_ra(int pid);
 reg_t proc_run_saved_sp(int pid);
-void proc_save_run_caller(int pid, reg_t ra, reg_t sp);
+reg_t proc_run_saved_s0(int pid);
+reg_t proc_run_saved_cont(int pid);
+void proc_save_run_caller(int pid, reg_t ra, reg_t sp, reg_t s0);
+void proc_save_run_cont(int pid, reg_t cont);
 void proc_prepare_kernel_return(struct context *cxt, int pid);
 
 #endif /* __PROC_H__ */
