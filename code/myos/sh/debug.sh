@@ -2,31 +2,53 @@
 # Start QEMU (frozen) + GDB for myos kernel debugging.
 #
 # Usage:
-#   ./sh/debug.sh              # default kernel out/os
-#   ./sh/debug.sh out/os       # explicit kernel path
+#   ./sh/debug.sh                    # default kernel out/os
+#   ./sh/debug.sh out/os             # explicit kernel path
+#   ./sh/debug.sh out/os -x extra.gdb
 #   GDB_PORT=1235 ./sh/debug.sh
 #
 # In GDB:
 #   break proc_user_run
 #   break trap_handler
+#   break do_syscall
 #   continue
-#   info registers
-#   bt
 #
 # Quit: Ctrl-C in GDB, then "quit". QEMU is stopped automatically.
 
 set -euo pipefail
 
 MYOS_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-KERNEL="${1:-${MYOS_KERNEL:-${MYOS_ROOT}/out/os}}"
+KERNEL="${MYOS_KERNEL:-${MYOS_ROOT}/out/os}"
 FW="${OPENSBI_FW:-${MYOS_ROOT}/firmware/fw_jump}"
 GDBINIT="${MYOS_ROOT}/sh/gdbinit"
 GDB_PORT="${GDB_PORT:-1234}"
+EXTRA_GDB=()
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	-x)
+		shift
+		[[ $# -gt 0 ]] || { echo "error: -x requires a gdb script path" >&2; exit 1; }
+		EXTRA_GDB+=("-x" "$1")
+		shift
+		;;
+	-*)
+		echo "error: unknown option: $1" >&2
+		exit 1
+		;;
+	*)
+		KERNEL="$1"
+		shift
+		;;
+	esac
+done
 
 QEMU="${QEMU:-qemu-system-riscv64}"
 GDB="${GDB:-riscv64-unknown-elf-gdb}"
 
-# Fall back if the cross gdb name differs.
+if ! command -v "${GDB}" >/dev/null 2>&1; then
+	GDB=/opt/riscv/bin/riscv64-unknown-elf-gdb
+fi
 if ! command -v "${GDB}" >/dev/null 2>&1; then
 	GDB=gdb-multiarch
 fi
@@ -77,23 +99,15 @@ else
 	QEMU_ARGS=(${QFLAGS} -kernel "${KERNEL}")
 fi
 echo "------------------------------------"
-echo "QEMU starts frozen (-S). GDB will connect and continue to start_kernel."
-echo "Quit GDB with 'quit' to stop QEMU."
-echo
-echo "Tip: non-interactive user-program debug (no login):"
-echo "  make AUTORUN=return0 && ./sh/debug.sh"
-echo "  (gdb) break proc_user_run"
-echo "  (gdb) continue"
-echo
-echo "Tip: start QEMU in another terminal if 'target remote' times out:"
-echo "  qemu-system-riscv64 ... -S -gdb tcp::1234 -bios firmware/fw_jump -kernel out/os"
+echo "QEMU starts frozen (-S). GDB connects and continues to start_kernel."
+echo "Optional extra gdb script: ./sh/debug.sh out/os -x my.gdb"
+echo "Non-interactive user test: make AUTORUN=<prog> && ./sh/debug.sh"
 echo
 
-# Do not pipe through serial_reader — GDB needs a clean stdio path.
 "${QEMU}" "${QEMU_ARGS[@]}" &
 QEMU_PID=$!
 
-# Give QEMU a moment to bind the gdb port.
 sleep 0.3
 
-exec "${GDB}" "${KERNEL}" -q -ex "target remote :${GDB_PORT}" -x "${GDBINIT}"
+exec "${GDB}" "${KERNEL}" -q -ex "target remote :${GDB_PORT}" -x "${GDBINIT}" \
+	${EXTRA_GDB[@]+"${EXTRA_GDB[@]}"}

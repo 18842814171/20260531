@@ -20,7 +20,8 @@ _start:
 	li	t1, 2
 	csrc	sstatus, t1
 
-	li	sp, 0x80210000
+	/* 128M QEMU RAM ends at 0x88000000; keep stack below that (see platform.h). */
+	li	sp, 0x87FF0000
 
 	/* P0: gp must be valid before any C code (trap_init captures kernel_gp). */
 .option push

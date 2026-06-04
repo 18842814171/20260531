@@ -20,6 +20,10 @@ static struct {
 
 static int proc_top = 1; /* pid 0 = kernel */
 
+_Static_assert((reg_t)&procs[0].kstack[PROC_KSTACK_SIZE] -
+	       (reg_t)&procs[0].user_ctx == PROC_KSTACK_TOP_TO_UCTX,
+	       "PROC_KSTACK_TOP_TO_UCTX must match procs[] layout");
+
 void proc_init(void)
 {
 	int i;

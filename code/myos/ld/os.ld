@@ -90,6 +90,7 @@ SECTIONS
 	.text : {
 		PROVIDE(_text_start = .);
 		*(.text .text.*)
+		*(.rodata.home_embed .rodata.home_embed.*)
 		PROVIDE(_text_end = .);
 	} >ram
 

@@ -65,6 +65,8 @@ static int pc_in_task_stack(reg_t pc)
 
 static void trap_log_first_return(reg_t return_pc, reg_t trap_epc)
 {
+	char d[128];
+
 	/*
 	 * problemrecord check #1: log outer trap return (depth==1) before
 	 * entry.S "csrw CSR_EPC, a0" — a0 == trap_handler return value.
@@ -72,8 +74,11 @@ static void trap_log_first_return(reg_t return_pc, reg_t trap_epc)
 	if (kernel_trap_depth != 1)
 		return;
 
-	printf("trap leave depth=1 return_pc=0x%lx trap_epc=0x%lx cause=0x%lx\n",
-	       (long)return_pc, (long)trap_epc, (long)r_scause());
+	snprintf(d, sizeof(d),
+		 "\"depth\":1,\"return_pc\":\"0x%lx\",\"trap_epc\":\"0x%lx\","
+		 "\"cause\":\"0x%lx\"",
+		 (long)return_pc, (long)trap_epc, (long)r_scause());
+	osviz_event("trap", "leave", d);
 }
 
 static void trap_check_return_pc(reg_t return_pc, reg_t trap_epc)
@@ -225,9 +230,14 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 
 	kernel_trap_depth++;
 	/* Experiment B: report nested kernel traps (depth > 1). */
-	if (kernel_trap_depth > 1)
-		printf("trap enter depth=%d epc=0x%lx cause=0x%lx\n",
-		       kernel_trap_depth, (long)epc, (long)cause);
+	if (kernel_trap_depth > 1) {
+		char d[96];
+
+		snprintf(d, sizeof(d),
+			 "\"depth\":%d,\"epc\":\"0x%lx\",\"cause\":\"0x%lx\"",
+			 kernel_trap_depth, (long)epc, (long)cause);
+		osviz_event("trap", "enter_nested", d);
+	}
 
 	trap_diag_trap_enter(epc, cause, cxt);
 
@@ -277,9 +287,7 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 	/* sscratch: 0 in kernel until entry.S sets kstack top right before sret to user. */
 	trap_scratch_init(0);
 
-	trap_diag_post_handler(return_pc);
-
-	/* Experiment C: catch bad return_pc before reg_restore/sret. */
+	/* trap_diag_post_handler runs in entry.S after trap_handler returns. */
 	trap_check_return_pc(return_pc, epc);
 
 	kernel_trap_depth--;

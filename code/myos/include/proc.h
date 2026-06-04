@@ -8,6 +8,8 @@ struct context;
 #define PROC_NAME_LEN   16
 #define PROC_MAX        16
 #define PROC_KSTACK_SIZE 4096
+/* user_ctx address = kstack top (exclusive) minus this (see procs[] in proc.c). */
+#define PROC_KSTACK_TOP_TO_UCTX  0x1120
 
 enum proc_state {
 	PROC_UNUSED = 0,

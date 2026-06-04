@@ -8,10 +8,13 @@ set print pretty on
 # OpenSBI runs first; break when the kernel C entry runs.
 break start_kernel
 
-# Uncomment for user-mode / trap debugging:
+# User-mode / trap / syscall debugging (uncomment as needed):
+# break proc_spawn_exec_wait
+# break proc_load_elf
 # break proc_user_run
 # break enter_uspace
-# break trap_vector
 # break trap_handler
+# break do_syscall
+# break fs_seed_file
 
 continue

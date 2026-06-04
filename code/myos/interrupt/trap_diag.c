@@ -1,4 +1,5 @@
 #include "os.h"
+#include "osviz_k.h"
 #include "trap_diag.h"
 #include "trap_csr.h"
 #include "proc_user.h"
@@ -19,9 +20,13 @@ reg_t read_gp(void)
 #ifdef CONFIG_TRAP_GP_DIAG
 void trap_diag_trap_vector_entry(reg_t sepc, reg_t gp)
 {
-	printf("[trap-diag] ENTRY sepc=0x%lx gp=0x%lx kernel_gp=0x%lx depth=%d\n",
-	       (unsigned long)sepc, (unsigned long)gp,
-	       (unsigned long)kernel_gp_value, kernel_trap_depth);
+	char d[128];
+
+	snprintf(d, sizeof(d),
+		 "\"sepc\":\"0x%lx\",\"gp\":\"0x%lx\",\"kernel_gp\":\"0x%lx\",\"depth\":%d",
+		 (unsigned long)sepc, (unsigned long)gp,
+		 (unsigned long)kernel_gp_value, kernel_trap_depth);
+	osviz_event("trap-diag", "vector_entry", d);
 }
 #endif
 
@@ -59,18 +64,20 @@ static int trap_diag_interesting(reg_t epc, reg_t cause, struct context *cxt)
 
 void trap_diag_print_csrs(const char *tag)
 {
+	char d[192];
+
 #ifdef CONFIG_OPENSBI
-	printf("[trap-diag] %s scause=0x%lx stval=0x%lx sepc=0x%lx "
-	       "sstatus=0x%lx sscratch=0x%lx\n",
-	       tag,
-	       (unsigned long)r_scause(),
-	       (unsigned long)r_stval(),
-	       (unsigned long)r_sepc(),
-	       (unsigned long)r_sstatus(),
-	       (unsigned long)r_sscratch());
+	snprintf(d, sizeof(d),
+		 "\"tag\":\"%s\",\"scause\":\"0x%lx\",\"stval\":\"0x%lx\","
+		 "\"sepc\":\"0x%lx\",\"sstatus\":\"0x%lx\",\"sscratch\":\"0x%lx\"",
+		 tag ? tag : "",
+		 (unsigned long)r_scause(), (unsigned long)r_stval(),
+		 (unsigned long)r_sepc(), (unsigned long)r_sstatus(),
+		 (unsigned long)r_sscratch());
+	osviz_event("trap-diag", "csr", d);
 #else
 	(void)tag;
-	printf("[trap-diag] %s (CONFIG_OPENSBI only CSR dump)\n", tag);
+	osviz_event("trap-diag", "csr", "\"note\":\"CONFIG_OPENSBI only\"");
 #endif
 }
 
@@ -92,19 +99,22 @@ static const char *pc_region(reg_t pc)
 
 void trap_diag_print_fault_frame(reg_t fault_epc, struct context *cxt)
 {
+	char d[256];
+
 	if (!cxt)
 		return;
 
-	printf("[trap-diag] fault frame (%s) fault_epc=0x%lx (%s)\n",
-	       frame_name(cxt), (unsigned long)fault_epc, pc_region(fault_epc));
-	printf("  ra=0x%lx (%s) sp=0x%lx gp=0x%lx\n",
-	       (unsigned long)cxt->ra, pc_region(cxt->ra),
-	       (unsigned long)cxt->sp, (unsigned long)cxt->gp);
-	printf("  saved_pc(sepc slot)=0x%lx (%s) t6=0x%lx\n",
-	       (unsigned long)cxt->pc, pc_region(cxt->pc),
-	       (unsigned long)cxt->t6);
+	snprintf(d, sizeof(d),
+		 "\"frame\":\"%s\",\"fault_epc\":\"0x%lx\",\"region\":\"%s\","
+		 "\"ra\":\"0x%lx\",\"sp\":\"0x%lx\",\"gp\":\"0x%lx\","
+		 "\"saved_pc\":\"0x%lx\",\"t6\":\"0x%lx\"",
+		 frame_name(cxt), (unsigned long)fault_epc, pc_region(fault_epc),
+		 (unsigned long)cxt->ra, (unsigned long)cxt->sp,
+		 (unsigned long)cxt->gp, (unsigned long)cxt->pc,
+		 (unsigned long)cxt->t6);
+	osviz_event("trap-diag", "fault_frame", d);
 	if (cxt->ra == fault_epc)
-		printf("[trap-diag] hint: ra == fault_epc (bad ret into fault site?)\n");
+		osviz_event("trap-diag", "hint", "\"ra_eq_fault_epc\":true");
 }
 
 static int epc_in_kernel_text(reg_t epc)
@@ -116,16 +126,22 @@ void trap_diag_trap_pre(reg_t epc, reg_t sscratch)
 {
 #if TRAP_DIAG_VERBOSE
 	const char *mode;
+	char d[128];
 
 	mode = epc_in_user(epc) ? "user" : "kernel";
-	printf("trap: pid=%d mode=%s epc=0x%lx sscratch=0x%lx (pre-swap)\n",
-	       proc_current_pid(), mode, (unsigned long)epc,
-	       (unsigned long)sscratch);
+	snprintf(d, sizeof(d),
+		 "\"pid\":%d,\"mode\":\"%s\",\"epc\":\"0x%lx\",\"sscratch\":\"0x%lx\","
+		 "\"phase\":\"pre_swap\"",
+		 proc_current_pid(), mode, (unsigned long)epc,
+		 (unsigned long)sscratch);
+	osviz_event("trap", "enter", d);
 
 	if (epc_in_kernel_text(epc) && sscratch != 0) {
-		printf("INVARIANT FAIL: kernel epc 0x%lx sscratch=0x%lx pid=%d\n",
-		       (unsigned long)epc, (unsigned long)sscratch,
-		       proc_current_pid());
+		snprintf(d, sizeof(d),
+			 "\"epc\":\"0x%lx\",\"sscratch\":\"0x%lx\",\"pid\":%d",
+			 (unsigned long)epc, (unsigned long)sscratch,
+			 proc_current_pid());
+		osviz_event("trap", "invariant_fail", d);
 		trap_diag_print_csrs("invariant-kernel-sscratch");
 		panic("kernel trap with sscratch != 0");
 	}
@@ -139,6 +155,7 @@ void trap_diag_trap_enter(reg_t epc, reg_t cause, struct context *cxt)
 	const char *kind;
 	reg_t sscratch_now;
 	const char *mode;
+	char d[192];
 
 	if (!TRAP_DIAG_VERBOSE || !trap_diag_interesting(epc, cause, cxt))
 		return;
@@ -147,46 +164,36 @@ void trap_diag_trap_enter(reg_t epc, reg_t cause, struct context *cxt)
 	sscratch_now = r_sscratch();
 	mode = epc_in_user(epc) ? "user" : "kernel";
 
-	printf("trap: pid=%d mode=%s epc=0x%lx sscratch=0x%lx frame=%s "
-	       "kind=%s code=%ld\n",
-	       proc_current_pid(), mode, (unsigned long)epc,
-	       (unsigned long)sscratch_now, frame_name(cxt), kind,
-	       (long)(cause & CAUSE_MASK_ECODE));
+	snprintf(d, sizeof(d),
+		 "\"pid\":%d,\"mode\":\"%s\",\"epc\":\"0x%lx\",\"sscratch\":\"0x%lx\","
+		 "\"frame\":\"%s\",\"kind\":\"%s\",\"code\":%ld",
+		 proc_current_pid(), mode, (unsigned long)epc,
+		 (unsigned long)sscratch_now, frame_name(cxt), kind,
+		 (long)(cause & CAUSE_MASK_ECODE));
+	osviz_event("trap", "enter", d);
 }
 
 void trap_diag_post_handler(reg_t ret_epc)
 {
+	char d[128];
+
 	if (!TRAP_DIAG_VERBOSE)
 		return;
 
-	if (epc_in_user(ret_epc))
-		printf("[trap-diag] LEAVE trap_handler ret_sepc=0x%lx "
-		       "sscratch=0x%lx sstatus=0x%lx\n",
-		       (unsigned long)ret_epc,
-		       (unsigned long)r_sscratch(),
-		       (unsigned long)r_sstatus());
-}
-
-static void trap_diag_put_hex(reg_t v)
-{
-	char buf[20];
-	int i = 0;
-
-	if (v == 0) {
-		uart_puts("0");
+	if (!epc_in_user(ret_epc))
 		return;
-	}
-	while (v > 0 && i < (int)sizeof(buf)) {
-		buf[i++] = "0123456789abcdef"[v & 0xf];
-		v >>= 4;
-	}
-	uart_puts("0x");
-	while (i > 0)
-		uart_putc(buf[--i]);
+
+	snprintf(d, sizeof(d),
+		 "\"ret_sepc\":\"0x%lx\",\"sscratch\":\"0x%lx\",\"sstatus\":\"0x%lx\"",
+		 (unsigned long)ret_epc, (unsigned long)r_sscratch(),
+		 (unsigned long)r_sstatus());
+	osviz_event("trap-diag", "leave_handler", d);
 }
 
 void trap_diag_trap_return(reg_t sepc, struct context *frame)
 {
+	char d[128];
+
 	if (!TRAP_DIAG_VERBOSE)
 		return;
 
@@ -194,13 +201,11 @@ void trap_diag_trap_return(reg_t sepc, struct context *frame)
 	    && sepc != proc_run_saved_cont(proc_current_pid()))
 		return;
 
-	uart_puts("[trap-diag] RETURN sepc=");
-	trap_diag_put_hex(sepc);
-	uart_puts(" restore_frame=");
-	uart_puts((char *)frame_name(frame));
-	uart_puts(" sscratch=");
-	trap_diag_put_hex(r_sscratch());
-	uart_putc('\n');
+	snprintf(d, sizeof(d),
+		 "\"sepc\":\"0x%lx\",\"restore_frame\":\"%s\",\"sscratch\":\"0x%lx\"",
+		 (unsigned long)sepc, frame_name(frame),
+		 (unsigned long)r_sscratch());
+	osviz_event("trap-diag", "return", d);
 }
 
 void trap_diag_user_exit_branch(void)

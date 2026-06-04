@@ -116,6 +116,10 @@ trap_vector:
 	la	t4, kernel_trap_busy
 	lw	t2, 0(t4)
 	bnez	t2, .Lskip_trap_pre
+	csrr	t0, CSR_SCRATCH
+	beqz	t0, 1f
+	j	.Lskip_trap_pre
+1:
 	addi	sp, sp, -32
 	sd	ra, 0(sp)
 	sd	t0, 8(sp)
@@ -162,19 +166,9 @@ trap_vector:
 .Ltrap_user:
 	csrr	t4, CSR_SCRATCH
 	csrw	CSR_SCRATCH, zero
-	mv	t2, sp
-	addi	sp, sp, -16
-	sd	ra, 0(sp)
-	.option push
-	.option norelax
-	la	t0, kernel_gp_value
-	.option pop
-	LOAD	gp, 0(t0)
-	mv	a0, t2
-	call	trap_get_user_frame
-	ld	ra, 0(sp)
-	addi	sp, sp, 16
-	mv	t6, a0
+	/* reg_save before any C call — trap_get_user_frame clobbers a0-a7 (syscall args). */
+	li	t0, 0x1120
+	sub	t6, sp, t0
 	reg_save t6
 	STORE	t3, 30*SIZE_REG(t6)
 	STORE	t4, 1*SIZE_REG(t6)

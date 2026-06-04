@@ -27,6 +27,7 @@ KERNEL := $(OUTPUT_PATH)/os
 LDSCRIPT := ld/os.ld
 LDSCRIPT_GEN := $(OUTPUT_PATH)/os.ld.generated
 HOME_DATA := fs/home_data.c
+HOME_EMBED := fs/home_embed.S
 
 SRCS_ASM := $(filter-out boot/hello_opensbi.S usr/crt0.S,\
 	$(wildcard boot/*.S interrupt/*.S usr/*.S))
@@ -35,11 +36,11 @@ SRCS_C := $(filter-out fs/home_data.c,$(SRCS_C)) fs/home_data.c
 
 OBJS_ASM := $(patsubst %.S,$(OUTPUT_PATH)/%,$(SRCS_ASM))
 OBJS_C := $(patsubst %.c,$(OUTPUT_PATH)/%,$(SRCS_C))
-OBJS := $(OBJS_ASM) $(OBJS_C)
+OBJS := $(OBJS_ASM) $(OBJS_C) $(OUTPUT_PATH)/fs/home_embed
 
 .PHONY: all clean userprogs
 
-all: userprogs $(HOME_DATA) $(OUTPUT_PATH) $(KERNEL)
+all: userprogs $(HOME_DATA) $(HOME_EMBED) $(OUTPUT_PATH) $(KERNEL)
 
 # Cross-compile guest ELFs in home/root/*.c → home/root/<name> (not done by gcc -c rules).
 userprogs:
@@ -48,13 +49,13 @@ userprogs:
 		./usr/compile.sh c "$$(basename "$$f")" || exit 1; \
 	done
 
-$(HOME_DATA): home/root/*
+$(HOME_DATA) $(HOME_EMBED): home/root/*
 	python3 tools/pack_home.py
 
 $(OUTPUT_PATH):
 	@mkdir -p $@
 
-$(KERNEL): $(HOME_DATA) $(OBJS) $(LDSCRIPT)
+$(KERNEL): $(HOME_DATA) $(HOME_EMBED) $(OBJS) $(LDSCRIPT)
 	$(CROSS_COMPILE)gcc -E -P -x c $(DEFS) $(CFLAGS) $(LDSCRIPT) > $(LDSCRIPT_GEN)
 	$(CROSS_COMPILE)gcc $(DEFS) $(CFLAGS) -T $(LDSCRIPT_GEN) -o $(KERNEL) $(OBJS)
 
@@ -67,4 +68,4 @@ $(OUTPUT_PATH)/%: %.c
 	$(CROSS_COMPILE)gcc $(DEFS) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -rf $(OUTPUT_PATH) $(HOME_DATA)
+	rm -rf $(OUTPUT_PATH) $(HOME_DATA) $(HOME_EMBED)
