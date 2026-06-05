@@ -3,6 +3,7 @@
 
 extern const unsigned char home_bin_file_rw[];
 extern const unsigned char home_bin_hi[];
+extern const unsigned char home_bin_pagefault[];
 extern const unsigned char home_bin_return0[];
 void fs_load_home(void)
 {
@@ -12,6 +13,8 @@ void fs_load_home(void)
     fs_seed_file("/home/root/hello.txt", "Hello from /home/root/hello.txt\nThis file is read by cross-compiled user programs.\n", 83, 0, 0);
     fs_seed_file("/home/root/hi", (const char *)home_bin_hi, 7424, 0, 1);
     fs_seed_file("/home/root/hi.c", "#include \"syscall.h\"\n\nstatic int write(int fd, const char *buf, int len)\n{\n\tregister long t0 asm(\"a0\") = fd;\n\tregister long t1 asm(\"a1\") = (long)buf;\n\tregister long t2 asm(\"a2\") = len;\n\tregister long t7 asm(\"a7\") = SYS_write;\n\n\tasm volatile(\"ecall\" : \"+r\"(t0) : \"r\"(t1), \"r\"(t2), \"r\"(t7) : \"memory\");\n\treturn (int)t0;\n}\n\nint main(void)\n{\n\twrite(1, \"hi from ./hi\\n\", 13);\n\treturn 0;\n}\n", 384, 0, 0);
+    fs_seed_file("/home/root/pagefault", (const char *)home_bin_pagefault, 7640, 0, 1);
+    fs_seed_file("/home/root/pagefault.c", "/*\n * Ordinary C program: use more stack than exec() pre-maps; the kernel\n * handles page faults on store \xe2\x80\x94 no mention of page tables here.\n */\n#include \"syscall.h\"\n\nstatic int write(int fd, const char *buf, int len)\n{\n\tregister long t0 asm(\"a0\") = fd;\n\tregister long t1 asm(\"a1\") = (long)buf;\n\tregister long t2 asm(\"a2\") = len;\n\tregister long t7 asm(\"a7\") = SYS_write;\n\n\tasm volatile(\"ecall\" : \"+r\"(t0) : \"r\"(t1), \"r\"(t2), \"r\"(t7) : \"memory\");\n\treturn (int)t0;\n}\n\nint main(void)\n{\n\tint i;\n\n\twrite(1, \"pagefault: using more stack than usual...\\n\", 42);\n\t/* Touch one page at a time via sp only (avoid frame-pointer locals above sp). */\n\tfor (i = 0; i < 20; i++) {\n\t\tasm volatile(\n\t\t\t\"addi sp, sp, -2048\\n\"\n\t\t\t\"addi sp, sp, -2048\\n\"\n\t\t\t\"sb   zero, 0(sp)\\n\"\n\t\t\t::: \"memory\");\n\t}\n\twrite(1, \"pagefault: done.\\n\", 16);\n\treturn 0;\n}\n", 829, 0, 0);
     fs_seed_file("/home/root/return0", (const char *)home_bin_return0, 6840, 0, 1);
     fs_seed_file("/home/root/return0.c", "int main(void)\n{\n\treturn 0;\n}\n", 30, 0, 0);
 }

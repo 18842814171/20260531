@@ -5,6 +5,7 @@
 #include "proc.h"
 #include "proc_user.h"
 #include "fs.h"
+#include "vm.h"
 
 #define LINE_MAX 128
 #define LOGIN_USER "root"
@@ -325,6 +326,42 @@ static int login_session(void)
 	}
 }
 
+static int parse_pid_arg(const char *s)
+{
+	int pid = 0;
+
+	if (!s || (s[0] != 'P' && s[0] != 'p'))
+		return -1;
+	s++;
+	while (*s >= '0' && *s <= '9') {
+		pid = pid * 10 + (*s - '0');
+		s++;
+	}
+	if (*s != '\0')
+		return -1;
+	return pid;
+}
+
+static void cmd_yebiao(const char *arg)
+{
+	int pid;
+
+	if (!arg || !arg[0]) {
+		uart_puts("usage: yebiao <file> | yebiao P<pid>\n");
+		return;
+	}
+	if (arg[0] == 'P' || arg[0] == 'p') {
+		pid = parse_pid_arg(arg);
+		if (pid < 0) {
+			uart_puts("usage: yebiao P<pid>  (e.g. yebiao P0, yebiao P2)\n");
+			return;
+		}
+		vm_info_proc(pid);
+	} else {
+		vm_info_file(arg);
+	}
+}
+
 static void print_help(void)
 {
 	uart_puts("Shell commands (Linux-style):\n");
@@ -332,7 +369,7 @@ static void print_help(void)
 	uart_puts("  cat <file>      touch <file>      vi <file>\n");
 	uart_puts("  echo ...        echo ... > f      echo ... >> f\n");
 	uart_puts("  ./program       sh script.sh\n");
-	uart_puts("  ps / ps aux     spawn worker      help / logout / poweroff\n");
+	uart_puts("  ps / ps aux     yebiao <f>|P<pid>  help / logout\n");
 }
 
 extern void demo_run_tasks(void);
@@ -409,6 +446,10 @@ static void shell_loop(void)
 			demo_run_tasks();
 		} else if (str_eq(line, "snapshot") || str_eq(line, "~snapshot")) {
 			osviz_snapshot();
+		} else if (str_prefix(line, "yebiao ")) {
+			cmd_yebiao(skip_word(line + 6));
+		} else if (str_eq(line, "yebiao")) {
+			cmd_yebiao(NULL);
 		} else {
 			uart_puts("Unknown command. Type 'help'.\n");
 		}

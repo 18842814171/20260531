@@ -6,6 +6,7 @@
 #include "trap_diag.h"
 #include "proc_user.h"
 #include "proc.h"
+#include "vm.h"
 
 extern void trap_vector(void);
 extern void timer_handler(void);
@@ -145,13 +146,19 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 	case 13:
 	case 15:
 		stats_inc_page_fault();
-		snprintf(d, sizeof(d), "\"sepc\":\"0x%lx\",\"cause\":%ld",
-			 (long)epc, (long)cause_code);
+		pid = proc_current_pid();
+		if (pid > 0 && vm_fault_handle(pid, (uint64_t)r_stval(), cause_code) == 0) {
+			*return_pc = epc;
+			break;
+		}
+		snprintf(d, sizeof(d), "\"sepc\":\"0x%lx\",\"stval\":\"0x%lx\",\"cause\":%ld",
+			 (long)epc, (long)r_stval(), (long)cause_code);
 		osviz_event("irq", "page_fault", d);
-		printf("page fault at 0x%lx (cause %ld)\n", (long)epc, (long)cause_code);
+		printf("page fault sepc=0x%lx stval=0x%lx cause=%ld (unhandled)\n",
+		       (long)epc, (long)r_stval(), (long)cause_code);
 		trap_diag_print_fault_frame(epc, cxt);
 		trap_check_return_pc(epc, epc);
-		panic("page fault (stub: no VM handler yet)");
+		panic("page fault");
 		break;
 	default:
 		snprintf(d, sizeof(d), "\"code\":%ld", (long)cause_code);

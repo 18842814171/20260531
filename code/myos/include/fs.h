@@ -40,4 +40,8 @@ int  fs_write_file(const char *path, const char *buf, int len, int truncate);
 
 void fs_seed_file(const char *path, const char *data, int size, int is_dir, int exec);
 
+/* For yebiao: ramfs file metadata (content lives in kernel memory, not CPU PT). */
+int fs_file_stat(const char *path, char *norm_out, int norm_cap,
+		 const char **data_out, int *size_out, int *is_dir_out);
+
 #endif /* __FS_H__ */

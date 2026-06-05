@@ -235,23 +235,26 @@ trap_vector:
 	beqz	t5, 6f
 	addi	sp, sp, -16
 	sd	ra, 0(sp)
+	sd	a0, 8(sp)	/* syscall return; proc_current_kstack_top clobbers a0 */
 	.option push
 	.option norelax
 	la	t0, kernel_gp_value
 	.option pop
 	LOAD	gp, 0(t0)
 	call	proc_current_kstack_top
+	mv	t0, a0		/* kstack top for sscratch */
+	ld	a0, 8(sp)	/* restore syscall return to a0 */
 	ld	ra, 0(sp)
 	addi	sp, sp, 16
-	li	t0, SIE_MASK
-	csrc	CSR_STATUS, t0
+	li	t1, SIE_MASK
+	csrc	CSR_STATUS, t1
 #ifdef CONFIG_OPENSBI
-	li	t0, SPP_MASK
-	csrc	CSR_STATUS, t0
-	li	t0, SPIE_MASK
-	csrs	CSR_STATUS, t0
+	li	t1, SPP_MASK
+	csrc	CSR_STATUS, t1
+	li	t1, SPIE_MASK
+	csrs	CSR_STATUS, t1
 #endif
-	csrw	CSR_SCRATCH, a0
+	csrw	CSR_SCRATCH, t0
 	la	t4, trap_reenable_irq
 	lw	t5, 0(t4)
 	beqz	t5, 7f

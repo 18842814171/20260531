@@ -5,11 +5,15 @@
 #include "syscall.h"
 #include "osviz_k.h"
 #include "trap_csr.h"
+#include "vm.h"
 
 #define ELF_MAGIC  0x464c457fU
 #define PT_LOAD    1
 #define EM_RISCV   243
-#define USER_STACK_TOP 0x80390000UL
+#define PF_X       1
+#define PF_W       2
+#define PF_R       4
+#define USER_STACK_PAGES 4
 
 struct elf64_ehdr {
 	unsigned char e_ident[16];
@@ -117,9 +121,14 @@ static void uctx_copy(struct context *dst, const struct context *src)
 
 static void addrspace_clone(int child_pid, int parent_pid)
 {
-	(void)child_pid;
-	(void)parent_pid;
-	/* Flat address space: fork duplicates trap frame only for now. */
+	pagetable_t parent_pt = proc_pagetable(parent_pid);
+	pagetable_t child_pt;
+
+	if (!parent_pt)
+		return;
+	child_pt = vm_fork_copy(parent_pt);
+	if (child_pt)
+		proc_set_pagetable(child_pid, child_pt);
 }
 
 int proc_load_elf(int pid, const char *path)
@@ -142,24 +151,65 @@ int proc_load_elf(int pid, const char *path)
 	if (eh->e_ident[4] != 2 || eh->e_machine != EM_RISCV)
 		return -1;
 
+	{
+		pagetable_t old_pt = proc_pagetable(pid);
+		pagetable_t pt = vm_create();
+
+		if (!pt)
+			return -1;
+		if (old_pt)
+			vm_destroy(old_pt);
+		proc_set_pagetable(pid, pt);
+	}
+
 	ph = (struct elf64_phdr *)(file_buf + eh->e_phoff);
 	for (i = 0; i < eh->e_phnum; i++) {
-		char *seg;
-		uint64_t off;
-		uint64_t j;
+		uint64_t va, off, remain, chunk;
+		int perm;
+		pagetable_t pt = proc_pagetable(pid);
 
 		if (ph[i].p_type != PT_LOAD)
 			continue;
 		if (ph[i].p_filesz > ph[i].p_memsz)
 			return -1;
-		seg = (char *)(unsigned long)ph[i].p_vaddr;
+		if (ph[i].p_vaddr < USER_MEM_BASE || ph[i].p_vaddr + ph[i].p_memsz > USER_MEM_END)
+			return -1;
 		off = ph[i].p_offset;
 		if (off + ph[i].p_filesz > (uint64_t)n)
 			return -1;
-		for (j = 0; j < ph[i].p_filesz; j++)
-			seg[j] = file_buf[off + j];
-		for (j = ph[i].p_filesz; j < ph[i].p_memsz; j++)
-			seg[j] = 0;
+		perm = PTE_U | PTE_V;
+		if (ph[i].p_flags & PF_R)
+			perm |= PTE_R;
+		if (ph[i].p_flags & PF_W)
+			perm |= PTE_W;
+		if (ph[i].p_flags & PF_X)
+			perm |= PTE_X;
+		if (!perm)
+			perm |= PTE_R;
+		for (va = ph[i].p_vaddr; va < ph[i].p_vaddr + ph[i].p_memsz; va += 4096UL) {
+			uint64_t page_off = va - ph[i].p_vaddr;
+			const char *src = NULL;
+			uint64_t src_len = 0;
+
+			if (page_off < ph[i].p_filesz) {
+				src = file_buf + off + page_off;
+				remain = ph[i].p_filesz - page_off;
+				chunk = remain > 4096UL ? 4096UL : remain;
+				src_len = chunk;
+			}
+			if (vm_map_user_page(pt, va, src, src_len, perm) < 0)
+				return -1;
+		}
+	}
+	{
+		pagetable_t pt = proc_pagetable(pid);
+		uint64_t sp_va = USER_STACK_TOP - USER_STACK_PAGES * 4096UL;
+		uint64_t va;
+
+		for (va = sp_va; va < USER_STACK_TOP; va += 4096UL) {
+			if (vm_map_user_zero(pt, va, 0, PTE_U | PTE_R | PTE_W | PTE_V) < 0)
+				return -1;
+		}
 	}
 
 	asm volatile("fence.i" ::: "memory");
@@ -218,13 +268,17 @@ int proc_user_run(int pid)
 	ktop = proc_kstack_top(pid);
 	if (!uc || !ktop)
 		return -1;
+	if (!proc_pagetable(pid))
+		return -1;
 
 	proc_save_run_caller(pid, saved_ra, saved_sp, saved_s0);
 
 	proc_set_state(pid, PROC_RUNNING);
 	proc_save_run_cont(pid, (reg_t)&&after_uspace);
+	vm_activate(proc_pagetable(pid));
 	proc_enter_uspace(pid, uc, ktop);
 after_uspace:
+	vm_activate(vm_kernel_pt());
 	trap_scratch_init(0);
 	current_pid = PROC_SHELL_PID;
 	return 0;

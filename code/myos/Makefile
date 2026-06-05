@@ -38,12 +38,12 @@ OBJS_ASM := $(patsubst %.S,$(OUTPUT_PATH)/%,$(SRCS_ASM))
 OBJS_C := $(patsubst %.c,$(OUTPUT_PATH)/%,$(SRCS_C))
 OBJS := $(OBJS_ASM) $(OBJS_C) $(OUTPUT_PATH)/fs/home_embed
 
-.PHONY: all clean userprogs
+.PHONY: all clean home
 
-all: userprogs $(HOME_DATA) $(HOME_EMBED) $(OUTPUT_PATH) $(KERNEL)
+all: home $(HOME_DATA) $(HOME_EMBED) $(OUTPUT_PATH) $(KERNEL)
 
 # Cross-compile guest ELFs in home/root/*.c → home/root/<name> (not done by gcc -c rules).
-userprogs:
+home:
 	@for f in home/root/*.c; do \
 		[ -f "$$f" ] || continue; \
 		./usr/compile.sh c "$$(basename "$$f")" || exit 1; \

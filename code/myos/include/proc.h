@@ -2,6 +2,7 @@
 #define __PROC_H__
 
 #include "types.h"
+#include "vm.h"
 
 struct context;
 
@@ -47,5 +48,8 @@ reg_t proc_run_saved_cont(int pid);
 void proc_save_run_caller(int pid, reg_t ra, reg_t sp, reg_t s0);
 void proc_save_run_cont(int pid, reg_t cont);
 void proc_prepare_kernel_return(struct context *cxt, int pid);
+
+pagetable_t proc_pagetable(int pid);
+void        proc_set_pagetable(int pid, pagetable_t pt);
 
 #endif /* __PROC_H__ */

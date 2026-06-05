@@ -1,5 +1,6 @@
 #include "os.h"
 #include "proc.h"
+#include "vm.h"
 
 extern reg_t kernel_gp_value;
 
@@ -16,6 +17,7 @@ static struct {
 	reg_t run_saved_s0;
 	reg_t run_saved_cont;
 	uint8_t kstack[PROC_KSTACK_SIZE] __attribute__((aligned(16)));
+	pagetable_t pagetable;
 } procs[PROC_MAX];
 
 static int proc_top = 1; /* pid 0 = kernel */
@@ -38,6 +40,7 @@ void proc_init(void)
 		procs[i].run_saved_ra = 0;
 		procs[i].run_saved_sp = 0;
 		procs[i].run_saved_cont = 0;
+		procs[i].pagetable = NULL;
 	}
 
 	procs[0].pid = 0;
@@ -70,6 +73,7 @@ int proc_alloc(const char *name, int ppid)
 		procs[i].run_saved_ra = 0;
 		procs[i].run_saved_sp = 0;
 		procs[i].run_saved_cont = 0;
+		procs[i].pagetable = NULL;
 		procs[i].name[0] = '\0';
 		if (name) {
 			for (j = 0; name[j] && j < PROC_NAME_LEN - 1; j++)
@@ -101,10 +105,32 @@ void proc_set_state(int pid, enum proc_state st)
 
 	for (i = 0; i < PROC_MAX; i++) {
 		if (procs[i].pid == pid) {
+			if (st == PROC_UNUSED && procs[i].pagetable) {
+				vm_destroy(procs[i].pagetable);
+				procs[i].pagetable = NULL;
+			}
 			procs[i].state = st;
 			return;
 		}
 	}
+}
+
+pagetable_t proc_pagetable(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return NULL;
+	return procs[slot].pagetable;
+}
+
+void proc_set_pagetable(int pid, pagetable_t pt)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return;
+	procs[slot].pagetable = pt;
 }
 
 int proc_slot_by_pid(int pid)

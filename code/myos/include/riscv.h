@@ -140,6 +140,19 @@ static inline reg_t r_stval(void)
 	return x;
 }
 
+static inline reg_t r_satp(void)
+{
+	reg_t x;
+	asm volatile("csrr %0, satp" : "=r" (x));
+	return x;
+}
+
+static inline void w_satp(reg_t x)
+{
+	asm volatile("csrw satp, %0" : : "r" (x));
+	asm volatile("sfence.vma zero, zero");
+}
+
 static inline void w_stvec(reg_t x)
 {
 	asm volatile("csrw stvec, %0" : : "r" (x));

@@ -7,6 +7,7 @@
 
 extern void uart_init(void);
 extern void page_init(void);
+extern void vm_init(void);
 extern void sched_init(void);
 extern void os_main(void);
 extern void trap_init(void);
@@ -90,6 +91,8 @@ void start_kernel(void)
 
 	page_init();
 	osviz_event("boot", "page_init", NULL);
+	vm_init();
+	osviz_event("boot", "vm_init", "\"mode\":\"Sv39\"");
 
 	snprintf(tbuf, sizeof(tbuf), "\"tvec\":\"0x%lx\"", (unsigned long)trap_vec_read());
 	osviz_event("boot", "trap_init", tbuf);

@@ -10,6 +10,10 @@ home_bin_file_rw:
 home_bin_hi:
     .incbin "../home/root/hi"
 
+.globl home_bin_pagefault
+home_bin_pagefault:
+    .incbin "../home/root/pagefault"
+
 .globl home_bin_return0
 home_bin_return0:
     .incbin "../home/root/return0"

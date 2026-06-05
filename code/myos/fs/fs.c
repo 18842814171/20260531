@@ -498,6 +498,31 @@ void fs_seed_file(const char *path, const char *data, int size, int is_dir, int 
 	n->data[n->size] = '\0';
 }
 
+int fs_file_stat(const char *path, char *norm_out, int norm_cap,
+		 const char **data_out, int *size_out, int *is_dir_out)
+{
+	char norm[FS_MAX_PATH];
+	struct fs_node *n;
+	int i;
+
+	if (!path || !data_out || !size_out || !is_dir_out)
+		return -1;
+	if (path_normalize(path, norm, sizeof(norm)) < 0)
+		return -1;
+	n = lookup_path(norm);
+	if (!n)
+		return -1;
+	if (norm_out && norm_cap > 0) {
+		for (i = 0; norm[i] && i < norm_cap - 1; i++)
+			norm_out[i] = norm[i];
+		norm_out[i] = '\0';
+	}
+	*data_out = n->data;
+	*size_out = n->size;
+	*is_dir_out = n->is_dir;
+	return 0;
+}
+
 void fs_init(void)
 {
 	int i;

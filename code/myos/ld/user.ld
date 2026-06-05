@@ -3,7 +3,7 @@ ENTRY( _start )
 
 SECTIONS
 {
-	. = 0x80380000;
+	. = 0x80400000;
 	.text : {
 		KEEP(*(.text.entry))
 		*(.text .text.*)

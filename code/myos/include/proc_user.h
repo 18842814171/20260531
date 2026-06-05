@@ -6,9 +6,10 @@
 struct context;
 
 #define PROC_SHELL_PID  1
-#define USER_MEM_BASE   0x80380000UL
-#define USER_MEM_END    0x80400000UL
+#define USER_MEM_BASE   0x80400000UL
+#define USER_MEM_END    0x80480000UL
 #define USER_MEM_SIZE   0x00080000UL
+#define USER_STACK_TOP  0x80470000UL
 
 void proc_user_init(void);
 int  proc_current_pid(void);

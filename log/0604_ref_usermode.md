@@ -148,7 +148,7 @@ So the bug is **before / during ramfs read**, not in `enter_uspace` / `sepc` / `
 
 1. **At `fence.i` in `proc_load_elf`:** `x/4bx file_buf+0x1000` and `x/4wx 0x80380000` — confirm whether load or FS is wrong.
 2. **Right after `fs_load_home`:** dump `nodes[i].data[0x1000]` for `/home/root/return0` — see if ramfs seed is already bad or corruption happens later.
-3. **`make clean && make userprogs && python3 tools/pack_home.py && make AUTORUN=return0`** — keep `home_data.c` in sync with rebuilt ELFs.
+3. **`make clean && make home && python3 tools/pack_home.py && make AUTORUN=return0`** — keep `home_data.c` in sync with rebuilt ELFs.
 4. **Do not trust GDB `ni` at `0x80380000`** until bytes verify as `37 81 00 00`; use `continue` to `0x80380014` (ecall).
 
 The U-mode **return path** (`enter_uspace`, trap frame, `sscratch`) matches the reference in spirit; the current crash is an **ELF bytes not reaching `0x80380000`** problem, not a wrong `sepc` on first entry.

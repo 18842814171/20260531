@@ -8,6 +8,7 @@
 static int sys_open(const char *path, int flags)
 {
 	char kpath[256];
+	int fd;
 
 	if (copy_from_user(kpath, path, sizeof(kpath) - 1) < 0)
 		return -1;
@@ -136,7 +137,6 @@ void do_syscall(struct context *cxt)
 	uint32_t syscall_num = (uint32_t)cxt->a7;
 	int ret = ENOSYS;
 	int pid = proc_current_pid();
-
 	switch (syscall_num) {
 	case SYS_gethid:
 		{

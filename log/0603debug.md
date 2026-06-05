@@ -212,7 +212,7 @@ GDB’s `fe72` at `0x80380000` is **not** the ELF encoding — likely **wrong di
 
 ```bash
 cd code/myos
-make clean && make userprogs          # build home/root/*.c ELFs
+make clean && make home          # build home/root/*.c ELFs
 make AUTORUN=return0                  # non-interactive smoke
 DEBUG=n ./sh/start_qemu.sh
 
