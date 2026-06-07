@@ -37,4 +37,7 @@ int  vm_fault_handle(int pid, uint64_t stval, reg_t cause);
 void vm_info_file(const char *path);
 void vm_info_proc(int pid);
 
+/* yebiao with no args: dump kernel + every live process. */
+void vm_info_all_procs(void);
+
 #endif /* __VM_H__ */

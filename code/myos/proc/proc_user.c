@@ -67,6 +67,7 @@ struct context *trap_get_user_frame(reg_t kstack_top)
 void proc_enter_uspace(int pid, struct context *uc, reg_t kstack_top)
 {
 	current_pid = pid;
+	w_sscratch(kstack_top);
 	enter_uspace(uc, kstack_top);
 }
 
@@ -82,6 +83,17 @@ int proc_current_pid(void)
 
 reg_t proc_current_kstack_top(void)
 {
+	return proc_kstack_top(proc_current_pid());
+}
+
+/*
+ * User trap: after csrrw, sp must be the process kernel stack top.
+ * If sscratch was wrong (user-range), reload from proc_kstack_top().
+ */
+reg_t trap_fixup_kstack_top(reg_t sp_after_swap)
+{
+	if (sp_after_swap < USER_MEM_BASE)
+		return sp_after_swap;
 	return proc_kstack_top(proc_current_pid());
 }
 
@@ -259,10 +271,13 @@ int proc_user_run(int pid)
 	struct context *uc;
 	reg_t ktop;
 	reg_t saved_ra, saved_sp, saved_s0;
+	int saved_pid;
 
 	asm volatile("mv %0, ra" : "=r"(saved_ra));
 	asm volatile("mv %0, sp" : "=r"(saved_sp));
 	asm volatile("mv %0, s0" : "=r"(saved_s0));
+
+	saved_pid = current_pid;
 
 	uc = proc_user_ctx(pid);
 	ktop = proc_kstack_top(pid);
@@ -278,9 +293,12 @@ int proc_user_run(int pid)
 	vm_activate(proc_pagetable(pid));
 	proc_enter_uspace(pid, uc, ktop);
 after_uspace:
+	proc_gdb_checkpoint(1, pid, uc);
+	printf("proc_user_run: pid=%d returned from user\n", pid);
 	vm_activate(vm_kernel_pt());
 	trap_scratch_init(0);
-	current_pid = PROC_SHELL_PID;
+	current_pid = saved_pid;
+	printf("\nproc_user_run returns 0...\n\n");
 	return 0;
 }
 
@@ -293,6 +311,28 @@ void proc_user_exit(int pid, int status)
 
 	exit_status[slot] = status;
 	proc_mark_zombie(pid);
+}
+
+reg_t proc_user_exit_trap(struct context *cxt)
+{
+	int pid = proc_current_pid();
+	reg_t cont, ret;
+	unsigned int status;
+
+	if (pid <= 0)
+		return 0;
+
+	vm_activate(vm_kernel_pt());
+	status = (unsigned int)cxt->a0;
+	if (status > 255)
+		status = 0;
+	proc_user_exit(pid, (int)status);
+	proc_prepare_kernel_return(cxt, pid);
+	cont = proc_run_saved_cont(pid);
+	ret = cont ? cont : proc_run_saved_ra(pid);
+	if (!ret || (ret >= USER_MEM_BASE && ret < USER_MEM_END))
+		panic("proc_user_exit_trap: bad kernel return");
+	return ret;
 }
 
 int proc_fork(int parent_pid)
@@ -316,6 +356,11 @@ int proc_fork(int parent_pid)
 	if (!parent_uc || !child_uc)
 		return -1;
 	uctx_copy(child_uc, parent_uc);
+	/*
+	 * enter_uspace() uses uc->pc as sepc. Syscall return advances epc+4 in
+	 * trap_handler; fork child must match or it re-executes ecall (fork storm).
+	 */
+	child_uc->pc += 4;
 	child_uc->a0 = 0;
 	addrspace_clone(child_pid, parent_pid);
 	proc_set_state(child_pid, PROC_READY);

@@ -27,7 +27,8 @@ extern int  printf(const char* s, ...);
 extern int  snprintf(char *out, size_t n, const char *s, ...);
 extern void panic(char *s);
 
-/* memory management */
+/* memory management (5.1 pmm_manager 框架) */
+extern void pmm_init(void);
 extern void *page_alloc(int npages);
 extern void page_free(void *p);
 

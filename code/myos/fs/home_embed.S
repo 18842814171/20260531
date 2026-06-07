@@ -6,6 +6,10 @@
 home_bin_file_rw:
     .incbin "../home/root/file_rw"
 
+.globl home_bin_fork_demo
+home_bin_fork_demo:
+    .incbin "../home/root/fork_demo"
+
 .globl home_bin_hi
 home_bin_hi:
     .incbin "../home/root/hi"

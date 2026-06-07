@@ -6,7 +6,7 @@
 #include "config.h"
 
 extern void uart_init(void);
-extern void page_init(void);
+extern void pmm_init(void);
 extern void vm_init(void);
 extern void sched_init(void);
 extern void os_main(void);
@@ -89,8 +89,8 @@ void start_kernel(void)
 	proc_init();
 	proc_user_init();
 
-	page_init();
-	osviz_event("boot", "page_init", NULL);
+	pmm_init();
+	osviz_event("boot", "pmm_init", NULL);
 	vm_init();
 	osviz_event("boot", "vm_init", "\"mode\":\"Sv39\"");
 

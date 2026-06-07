@@ -49,6 +49,21 @@ void proc_save_run_caller(int pid, reg_t ra, reg_t sp, reg_t s0);
 void proc_save_run_cont(int pid, reg_t cont);
 void proc_prepare_kernel_return(struct context *cxt, int pid);
 
+/* GDB: phase 0 = before sret to kernel cont; phase 1 = landed at after_uspace */
+struct proc_gdb_snap {
+	int phase;
+	int pid;
+	int state;
+	int cur_pid;
+	reg_t saved_cont;
+	reg_t saved_ra;
+	reg_t cxt_pc;
+	reg_t cxt_ra;
+	reg_t cxt_sp;
+};
+extern struct proc_gdb_snap proc_gdb_last;
+void proc_gdb_checkpoint(int phase, int pid, struct context *cxt);
+
 pagetable_t proc_pagetable(int pid);
 void        proc_set_pagetable(int pid, pagetable_t pt);
 

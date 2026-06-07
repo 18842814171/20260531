@@ -1,5 +1,6 @@
 #include "os.h"
 #include "proc.h"
+#include "proc_user.h"
 #include "vm.h"
 
 extern reg_t kernel_gp_value;
@@ -106,6 +107,8 @@ void proc_set_state(int pid, enum proc_state st)
 	for (i = 0; i < PROC_MAX; i++) {
 		if (procs[i].pid == pid) {
 			if (st == PROC_UNUSED && procs[i].pagetable) {
+				printf("destroy vm pid=%d pt=%p\n",
+				       pid, (void *)procs[i].pagetable);
 				vm_destroy(procs[i].pagetable);
 				procs[i].pagetable = NULL;
 			}
@@ -270,6 +273,23 @@ void proc_save_run_cont(int pid, reg_t cont)
 	procs[slot].run_saved_cont = cont;
 }
 
+struct proc_gdb_snap proc_gdb_last;
+
+void proc_gdb_checkpoint(int phase, int pid, struct context *cxt)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	proc_gdb_last.phase = phase;
+	proc_gdb_last.pid = pid;
+	proc_gdb_last.state = (slot >= 0) ? (int)procs[slot].state : -1;
+	proc_gdb_last.cur_pid = proc_current_pid();
+	proc_gdb_last.saved_cont = proc_run_saved_cont(pid);
+	proc_gdb_last.saved_ra = proc_run_saved_ra(pid);
+	proc_gdb_last.cxt_pc = cxt ? cxt->pc : 0;
+	proc_gdb_last.cxt_ra = cxt ? cxt->ra : 0;
+	proc_gdb_last.cxt_sp = cxt ? cxt->sp : 0;
+}
+
 void proc_prepare_kernel_return(struct context *cxt, int pid)
 {
 	reg_t cont = proc_run_saved_cont(pid);
@@ -279,13 +299,14 @@ void proc_prepare_kernel_return(struct context *cxt, int pid)
 	reg_t pc;
 
 	if (!cxt || !ra)
-		return;
+		panic("proc_prepare_kernel_return: no saved caller");
 	pc = cont ? cont : ra;
 	cxt->pc = pc;
 	cxt->sp = sp;
 	cxt->ra = ra;
 	cxt->gp = kernel_gp_value;
 	cxt->s0 = s0;
+	proc_gdb_checkpoint(0, pid, cxt);
 }
 
 extern int task_create(void (*start)(void));

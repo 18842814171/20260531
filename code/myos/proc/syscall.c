@@ -111,7 +111,13 @@ static int sys_fork(struct context *cxt)
 		return -1;
 
 	cxt->a0 = (reg_t)child;
-	osviz_event("proc", "fork", "\"parent\":1");
+	{
+		char buf[64];
+
+		snprintf(buf, sizeof(buf),
+			 "\"parent\":%d,\"child\":%d", parent, child);
+		osviz_event("proc", "fork", buf);
+	}
 	return child;
 }
 
@@ -165,7 +171,7 @@ void do_syscall(struct context *cxt)
 		ret = sys_read((int)cxt->a0, (char *)(reg_t)cxt->a1, (int)cxt->a2);
 		break;
 	case SYS_exit:
-		ret = 0;
+		panic("SYS_exit leaked to do_syscall");
 		break;
 	case SYS_fork:
 		ret = sys_fork(cxt);

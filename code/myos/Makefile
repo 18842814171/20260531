@@ -38,6 +38,8 @@ OBJS_ASM := $(patsubst %.S,$(OUTPUT_PATH)/%,$(SRCS_ASM))
 OBJS_C := $(patsubst %.c,$(OUTPUT_PATH)/%,$(SRCS_C))
 OBJS := $(OBJS_ASM) $(OBJS_C) $(OUTPUT_PATH)/fs/home_embed
 
+COMPILE_SH ?= usr/compile.sh
+
 .PHONY: all clean home
 
 all: home $(HOME_DATA) $(HOME_EMBED) $(OUTPUT_PATH) $(KERNEL)
@@ -46,7 +48,7 @@ all: home $(HOME_DATA) $(HOME_EMBED) $(OUTPUT_PATH) $(KERNEL)
 home:
 	@for f in home/root/*.c; do \
 		[ -f "$$f" ] || continue; \
-		./usr/compile.sh c "$$(basename "$$f")" || exit 1; \
+		./$(COMPILE_SH) c "$$(basename "$$f")" || exit 1; \
 	done
 
 $(HOME_DATA) $(HOME_EMBED): home/root/*

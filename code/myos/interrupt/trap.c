@@ -115,19 +115,8 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 		stats_inc_ecall();
 		if (cxt->a7 == SYS_exit) {
 			pid = proc_current_pid();
-
 			if (pid > 0) {
-				reg_t cont;
-				struct context *uc = proc_user_ctx(pid);
-				unsigned int status = (unsigned int)(uc ? uc->a0 : cxt->a0);
-
-				/* Trap frame may be kernel_trap_cxt; ignore bogus pointer-as-status. */
-				if (status > 255)
-					status = 0;
-				proc_user_exit(pid, (int)status);
-				proc_prepare_kernel_return(cxt, pid);
-				cont = proc_run_saved_cont(pid);
-				*return_pc = cont ? cont : proc_run_saved_ra(pid);
+				*return_pc = proc_user_exit_trap(cxt);
 #ifdef CONFIG_OPENSBI
 				w_sstatus(r_sstatus() | SSTATUS_SPP);
 #endif
@@ -138,6 +127,8 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 				*return_pc = cxt->pc;
 			}
 		} else {
+			if (epc_in_user(epc))
+				cxt->ra = epc + 4;
 			do_syscall(cxt);
 			*return_pc += 4;
 		}
@@ -154,8 +145,8 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 		snprintf(d, sizeof(d), "\"sepc\":\"0x%lx\",\"stval\":\"0x%lx\",\"cause\":%ld",
 			 (long)epc, (long)r_stval(), (long)cause_code);
 		osviz_event("irq", "page_fault", d);
-		printf("page fault sepc=0x%lx stval=0x%lx cause=%ld (unhandled)\n",
-		       (long)epc, (long)r_stval(), (long)cause_code);
+		printf("page fault pid=%d current=%d sepc=0x%lx stval=0x%lx cause=%ld (unhandled)\n",
+		       pid, proc_current_pid(), (long)epc, (long)r_stval(), (long)cause_code);
 		trap_diag_print_fault_frame(epc, cxt);
 		trap_check_return_pc(epc, epc);
 		panic("page fault");
@@ -275,8 +266,6 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 			break;
 		}
 	} else {
-		if (epc_in_user(epc) && (cause_code == 8 || cause_code == 9))
-			cxt->ra = epc + 4;
 		handle_sync_exception(cause_code, epc, cxt, &return_pc);
 	}
 
@@ -290,6 +279,19 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 	trap_return_to_user = epc_in_user(return_pc);
 	if (irq_was_on && trap_return_to_user)
 		trap_reenable_irq = 1;
+
+	/*
+	 * Syscall paths such as waitpid → proc_user_run(child) leave the kernel
+	 * page table active (after_uspace and proc_user_exit_trap both switch to
+	 * it). sret back to user needs the current process user mappings.
+	 */
+	if (trap_return_to_user) {
+		int pid = proc_current_pid();
+		pagetable_t pt = pid > 0 ? proc_pagetable(pid) : NULL;
+
+		if (pt)
+			vm_activate(pt);
+	}
 
 	/* sscratch: 0 in kernel until entry.S sets kstack top right before sret to user. */
 	trap_scratch_init(0);

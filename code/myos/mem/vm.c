@@ -384,6 +384,20 @@ void vm_info_proc(int pid)
 	printf("  total user 4KiB pages: %d\n", count);
 }
 
+void vm_info_all_procs(void)
+{
+	struct proc_info list[PROC_MAX];
+	int n, i;
+
+	n = proc_list(list, PROC_MAX);
+	printf("yebiao: all processes (%d user + kernel)\n", n);
+	vm_info_proc(0);
+	for (i = 0; i < n; i++) {
+		printf("\n");
+		vm_info_proc(list[i].pid);
+	}
+}
+
 pagetable_t vm_fork_copy(pagetable_t parent)
 {
 	pagetable_t child;

@@ -101,6 +101,7 @@
 .globl trap_diag_post_handler
 .globl trap_diag_trap_return
 .globl trap_diag_trap_pre
+.globl trap_fixup_kstack_top
 .globl enter_uspace
 .globl switch_to
 
@@ -117,9 +118,9 @@ trap_vector:
 	lw	t2, 0(t4)
 	bnez	t2, .Lskip_trap_pre
 	csrr	t0, CSR_SCRATCH
-	beqz	t0, 1f
+	beqz	t0, .L_trap_pre
 	j	.Lskip_trap_pre
-1:
+.L_trap_pre:
 	addi	sp, sp, -32
 	sd	ra, 0(sp)
 	sd	t0, 8(sp)
@@ -143,15 +144,27 @@ trap_vector:
 
 	csrr	sp, CSR_SCRATCH
 	csrw	CSR_SCRATCH, zero
+	/* User trap with sscratch=0: sp holds user sp — use process kstack frame. */
+	csrr	t0, CSR_EPC
+	li	t1, 0x80400000
+	bltu	t0, t1, .L_kernel_trap
+	li	t1, 0x80480000
+	bgeu	t0, t1, .L_kernel_trap
+	mv	t4, sp
+	mv	a0, sp
+	call	trap_fixup_kstack_top
+	mv	sp, a0
+	j	.Ltrap_user_save
+.L_kernel_trap:
 #ifndef CONFIG_TRAP_NO_NESTED_TIMER_FASTPATH
 	la	t4, kernel_trap_busy
 	lw	t2, 0(t4)
-	beqz	t2, 1f
+	beqz	t2, .L_kernel_trap_frame
 	csrr	t0, CSR_CAUSE
-	bgez	t0, 1f
+	bgez	t0, .L_kernel_trap_frame
 	andi	t0, t0, 0x7ff
 	li	t2, 5
-	bne	t0, t2, 1f
+	bne	t0, t2, .L_kernel_trap_frame
 	addi	sp, sp, -16
 	sd	ra, 0(sp)
 	call	trap_nested_timer_ack
@@ -159,13 +172,20 @@ trap_vector:
 	addi	sp, sp, 16
 	TRAP_RET
 #endif
-1:
+.L_kernel_trap_frame:
 	la	t6, kernel_trap_cxt
 	j	.Ltrap_save
 
 .Ltrap_user:
 	csrr	t4, CSR_SCRATCH
 	csrw	CSR_SCRATCH, zero
+	/* If sscratch held a user VA, sp is wrong — reload kernel kstack top. */
+	li	t0, 0x80400000
+	bltu	sp, t0, .Ltrap_user_save
+	mv	a0, sp
+	call	trap_fixup_kstack_top
+	mv	sp, a0
+.Ltrap_user_save:
 	/* reg_save before any C call — trap_get_user_frame clobbers a0-a7 (syscall args). */
 	li	t0, 0x1120
 	sub	t6, sp, t0
@@ -227,25 +247,15 @@ trap_vector:
 	ld	ra, 0(sp)
 	addi	sp, sp, 32
 
-	reg_restore t6
-
 	la	t4, trap_return_to_user
 	lw	t5, 0(t4)
 	sw	zero, 0(t4)
-	beqz	t5, 6f
-	addi	sp, sp, -16
-	sd	ra, 0(sp)
-	sd	a0, 8(sp)	/* syscall return; proc_current_kstack_top clobbers a0 */
-	.option push
-	.option norelax
-	la	t0, kernel_gp_value
-	.option pop
-	LOAD	gp, 0(t0)
-	call	proc_current_kstack_top
-	mv	t0, a0		/* kstack top for sscratch */
-	ld	a0, 8(sp)	/* restore syscall return to a0 */
-	ld	ra, 0(sp)
-	addi	sp, sp, 16
+	beqz	t5, .L_restore_kernel
+	/* Set sscratch before reg_restore (reg_restore overwrites t6). */
+	mv	t0, t6
+	li	t1, 0x1120
+	add	t0, t0, t1
+	csrw	CSR_SCRATCH, t0
 	li	t1, SIE_MASK
 	csrc	CSR_STATUS, t1
 #ifdef CONFIG_OPENSBI
@@ -254,16 +264,17 @@ trap_vector:
 	li	t1, SPIE_MASK
 	csrs	CSR_STATUS, t1
 #endif
-	csrw	CSR_SCRATCH, t0
+	j	.L_restore_done
+.L_restore_kernel:
+	csrw	CSR_SCRATCH, zero
+.L_restore_done:
+	reg_restore t6
+
 	la	t4, trap_reenable_irq
 	lw	t5, 0(t4)
-	beqz	t5, 7f
+	beqz	t5, .L_trap_ret
 	sw	zero, 0(t4)
-7:
-	j	8f
-6:
-	csrw	CSR_SCRATCH, zero
-8:
+.L_trap_ret:
 	la	t4, kernel_trap_busy
 	sw	zero, 0(t4)
 	TRAP_RET

@@ -1,20 +1,49 @@
-# GDB init for myos on QEMU riscv64 virt + OpenSBI
-# Used by sh/debug.sh (target remote is set by the script).
+delete breakpoints
 
-set architecture riscv:rv64
-set disassemble-next-line on
-set print pretty on
+# 用户程序符号（fork_demo 链接在 0x80400000）
+add-symbol-file /home/linda/5.29/code/myos/home/root/fork_demo 0x80400000
 
-# OpenSBI runs first; break when the kernel C entry runs.
-break start_kernel
+# 核心：pid=3 从用户返回、落到 after_uspace 那一刻（比 panic 早得多）
+break proc_user.c:297 if pid == 3
+commands
+silent
+printf "\n========== after_uspace pid=%d ==========\n", pid
+bt
+info reg ra sp s0 pc
+printf "\n--- proc_gdb_last (上一趟 checkpoint) ---\n"
+printf "saved_cont=0x%lx saved_ra=0x%lx\n", proc_gdb_last.saved_cont, proc_gdb_last.saved_ra
+printf "cxt_pc=0x%lx cxt_ra=0x%lx cxt_sp=0x%lx\n", proc_gdb_last.cxt_pc, proc_gdb_last.cxt_ra, proc_gdb_last.cxt_sp
+printf "\n--- saved_ra / cont 指向什么 ---\n"
+x/4i proc_gdb_last.saved_ra
+x/4i proc_gdb_last.saved_cont
+printf "\n--- 当前 $ra ---\n"
+x/4i $ra
+printf "\n--- 三个可疑用户态地址 ---\n"
+printf "0x80400046 = syscall3 ecall 返回后 (mv a5,a0)\n"
+printf "0x8040005e = syscall1 入口存参 (sd a1,-32(s0))\n"
+printf "0x80400332 = main 里 grow_stack_pages(\"parent\")\n"
+x/10i 0x80400046
+x/10i 0x8040005e
+x/10i 0x80400332
+printf "\n(手动: p proc_gdb_last  /  p proc_run_saved_ra(3))\n\n"
+end
 
-# User-mode / trap / syscall debugging (uncomment as needed):
-# break proc_spawn_exec_wait
-# break proc_load_elf
-# break proc_user_run
-# break enter_uspace
-# break trap_handler
-# break do_syscall
-# break fs_seed_file
-
+# SYS_exit 后、sret 之前（phase 0）
+break proc_gdb_checkpoint
+commands
+silent
+finish
+if proc_gdb_last.phase == 0 && proc_gdb_last.pid == 3
+  printf "\n--- phase 0 before-sret pid=3 ---\n"
+  printf "saved_cont=0x%lx saved_ra=0x%lx\n", proc_gdb_last.saved_cont, proc_gdb_last.saved_ra
+  printf "cxt_pc(sepc)=0x%lx cxt_ra=0x%lx cxt_sp=0x%lx\n", proc_gdb_last.cxt_pc, proc_gdb_last.cxt_ra, proc_gdb_last.cxt_sp
+  x/4i proc_gdb_last.cxt_pc
+  x/4i proc_gdb_last.cxt_ra
+end
 continue
+end
+
+break panic
+
+# 其他 pid：把 3 改成实际 child pid
+# break proc_user.c:297 if pid == N

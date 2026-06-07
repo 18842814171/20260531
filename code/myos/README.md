@@ -9,7 +9,6 @@
 ## 交叉编译（构建机）
 
 ```bash
-cd usr
 ./compile.sh c file_rw.c
 ```
 
@@ -36,3 +35,24 @@ root@/home/root$ ./file_rw
 root@/home/root$ sh hello.sh
 ```
 
+OpenSBI 启动
+  └─ start_kernel()                    内核初始化（uart、vm、trap…）
+       └─ debug_autorun_user_and_exit("pagefault")
+            └─ proc_spawn_exec_wait("pagefault")
+                 ├─ proc_alloc()           分配 pid=2
+                 ├─ proc_load_elf()        把 pagefault 装进用户地址空间
+                 └─ proc_user_run(2)       ★ BP1 停在这里面
+                      ├─ proc_save_run_caller()   保存内核返回地址
+                      ├─ proc_save_run_cont()     ★ 你见过的 BP1：写入 after_uspace
+                      ├─ vm_activate()            切换页表
+                      └─ enter_uspace() → sret    进用户态
+                           └─ _start (crt0)
+                                └─ main()          pagefault 用户代码
+                                     ├─ write("using more stack...")
+                                     ├─ 循环：sp 下降 + sb zero（缺页 trap 很多次）
+                                     ├─ write("done.")
+                                     └─ return 0
+                                          └─ ret → 跳到 0  ★ 坏了
+                                               └─ 取指 fault @ sepc=0
+                                                    └─ handle_sync_exception()  ★ BP2 停这里
+                                                         └─ panic

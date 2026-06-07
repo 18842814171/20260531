@@ -16,6 +16,8 @@ int  proc_current_pid(void);
 reg_t proc_current_kstack_top(void);
 void proc_set_current_pid(int pid);
 
+reg_t trap_fixup_kstack_top(reg_t sp_after_swap);
+
 struct context *proc_user_trap_frame(void);
 struct context *trap_get_user_frame(reg_t kstack_top);
 void proc_enter_uspace(int pid, struct context *uc, reg_t kstack_top);
@@ -23,6 +25,9 @@ void proc_enter_uspace(int pid, struct context *uc, reg_t kstack_top);
 int proc_load_elf(int pid, const char *path);
 int proc_user_run(int pid);
 void proc_user_exit(int pid, int status);
+
+/* Handle SYS_exit: mark zombie and return kernel continuation (never user). */
+reg_t proc_user_exit_trap(struct context *cxt);
 
 int proc_fork(int parent_pid);
 int proc_wait(int parent_pid, int child_pid);

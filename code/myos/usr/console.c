@@ -347,7 +347,7 @@ static void cmd_yebiao(const char *arg)
 	int pid;
 
 	if (!arg || !arg[0]) {
-		uart_puts("usage: yebiao <file> | yebiao P<pid>\n");
+		vm_info_all_procs();
 		return;
 	}
 	if (arg[0] == 'P' || arg[0] == 'p') {
@@ -369,7 +369,7 @@ static void print_help(void)
 	uart_puts("  cat <file>      touch <file>      vi <file>\n");
 	uart_puts("  echo ...        echo ... > f      echo ... >> f\n");
 	uart_puts("  ./program       sh script.sh\n");
-	uart_puts("  ps / ps aux     yebiao <f>|P<pid>  help / logout\n");
+	uart_puts("  ps / ps aux     yebiao [file|P<pid>]  help / logout\n");
 }
 
 extern void demo_run_tasks(void);

@@ -35,7 +35,7 @@ build_guest_c() {
 	local src="$1"
 	local base=$(basename "$src" .c)
 	local out="$HOME_DIR/$base"
-	
+
 	mkdir -p "$HOME_DIR"
 	"$CC" $USER_CFLAGS $USER_LDFLAGS -o "$out" "$USR_DIR/crt0.S" "$src"
 }
