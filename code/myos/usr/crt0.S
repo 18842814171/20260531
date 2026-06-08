@@ -3,7 +3,6 @@
 _start:
 	li	sp, 0x80470000
 	call	main
-	li	a0, 0
-	li	a7, 93
-	ecall
+	mv	a0, a0
+	call	exit
 1:	j	1b

@@ -19,6 +19,8 @@
 #define PTE2PA(pte)  (((pte) >> 10) << 12)
 #define PTE_FLAGS(pte) ((pte) & 0x3FFUL)
 
+// PTE_U:page is user accessible
+//PTE_V:page is valid
 static pagetable_t kernel_pt;
 
 static void kzero(void *p, int n)
@@ -252,6 +254,40 @@ uint64_t vm_pte_at(pagetable_t pt, uint64_t va)
 	return *pte;
 }
 
+uint64_t vm_walkaddr(pagetable_t pt, uint64_t va)
+{
+	uint64_t *pte;
+	uint64_t pa;
+
+	if (va < USER_MEM_BASE || va >= USER_MEM_END)
+		return 0;
+	pte = vm_walk(pt, va, 0);
+	if (!pte)
+		return 0;
+	if (!(*pte & PTE_V))
+		return 0;
+	if (!(*pte & PTE_U))
+		return 0;
+	pa = PTE2PA(*pte);
+	return pa;
+}
+
+uint64_t vm_user_fault_map(pagetable_t pt, uint64_t va)
+{
+	uint64_t *pte;
+	uint64_t page_va;
+
+	if (va < USER_MEM_BASE || va >= USER_MEM_END)
+		return 0;
+	page_va = va & ~PGMASK;
+	pte = vm_walk(pt, page_va, 0);
+	if (pte && (*pte & PTE_V) && (*pte & PTE_U))
+		return 0;
+	if (vm_map_user_zero(pt, page_va, 0, PTE_U | PTE_R | PTE_W | PTE_V) < 0)
+		return 0;
+	return vm_walkaddr(pt, page_va);
+}
+
 static void vm_perm_string(uint64_t pte, char *buf, int cap)
 {
 	int i = 0;
@@ -295,7 +331,7 @@ int vm_fault_handle(int pid, uint64_t stval, reg_t cause)
 	if (pte && (*pte & PTE_V) && (*pte & PTE_U))
 		return -1;
 
-	if (vm_map_user_zero(pt, va, 0, PTE_U | PTE_R | PTE_W | PTE_V) < 0)
+	if (vm_user_fault_map(pt, va) == 0)
 		return -1;
 	return 0;
 }
@@ -329,6 +365,20 @@ void vm_info_file(const char *path)
 		printf("  (empty file)\n");
 }
 
+static const char *proc_state_label(enum proc_state st)
+{
+	switch (st) {
+	case PROC_RUNNING:
+		return "R running";
+	case PROC_READY:
+		return "S sleeping";
+	case PROC_ZOMBIE:
+		return "Z zombie";
+	default:
+		return "? unknown";
+	}
+}
+
 void vm_info_proc(int pid)
 {
 	pagetable_t pt;
@@ -336,6 +386,7 @@ void vm_info_proc(int pid)
 	int n, i, found, count;
 	uint64_t va;
 	char perm[8];
+	char note[128];
 
 	if (pid == 0) {
 		printf("yebiao proc: pid=0 (kernel)\n");
@@ -359,10 +410,15 @@ void vm_info_proc(int pid)
 	}
 
 	pt = proc_pagetable(pid);
-	printf("yebiao proc: pid=%d name=%s state=%d\n", pid, list[i].name,
-	       (int)list[i].state);
+	printf("yebiao proc: pid=%d name=%s state=%s\n", pid, list[i].name,
+	       proc_state_label(list[i].state));
 	if (!pt) {
-		printf("  (no page table — never ran user code)\n");
+		if (script_bg_describe(pid, note, sizeof(note)))
+			printf("  %s\n", note);
+		else if (pid == 1)
+			printf("  interactive shell (kernel task, no user PT)\n");
+		else
+			printf("  kernel task (no user page table)\n");
 		return;
 	}
 	printf("  satp=0x%lx root=%p\n",
@@ -390,9 +446,11 @@ void vm_info_all_procs(void)
 	int n, i;
 
 	n = proc_list(list, PROC_MAX);
-	printf("yebiao: all processes (%d user + kernel)\n", n);
+	printf("yebiao: all processes (%d listed)\n", n);
 	vm_info_proc(0);
 	for (i = 0; i < n; i++) {
+		if (list[i].pid == 0)
+			continue;
 		printf("\n");
 		vm_info_proc(list[i].pid);
 	}

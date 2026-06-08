@@ -29,9 +29,10 @@ LDSCRIPT_GEN := $(OUTPUT_PATH)/os.ld.generated
 HOME_DATA := fs/home_data.c
 HOME_EMBED := fs/home_embed.S
 
-SRCS_ASM := $(filter-out boot/hello_opensbi.S usr/crt0.S,\
+SRCS_ASM := $(filter-out boot/hello_opensbi.S usr/crt0.S usr/usys.S,\
 	$(wildcard boot/*.S interrupt/*.S usr/*.S))
 SRCS_C := $(wildcard boot/*.c interrupt/*.c mem/*.c proc/*.c fs/*.c usr/*.c)
+SRCS_C := $(filter-out usr/ulib.c usr/printf.c,$(SRCS_C))
 SRCS_C := $(filter-out fs/home_data.c,$(SRCS_C)) fs/home_data.c
 
 OBJS_ASM := $(patsubst %.S,$(OUTPUT_PATH)/%,$(SRCS_ASM))

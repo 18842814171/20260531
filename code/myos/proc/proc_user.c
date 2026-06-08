@@ -47,6 +47,18 @@ static char file_buf[FS_MAX_SIZE];
 
 static int exit_status[PROC_MAX];
 static int fork_child_pending = -1;
+static int spawn_bg_pid = -1;
+
+static void spawn_bg_trampoline(void)
+{
+	int pid = spawn_bg_pid;
+
+	if (pid <= 0)
+		return;
+	proc_user_run(pid);
+	proc_wait(PROC_SHELL_PID, pid);
+	spawn_bg_pid = -1;
+}
 static int current_pid = PROC_SHELL_PID;
 
 extern struct context kernel_trap_cxt;
@@ -434,6 +446,50 @@ int proc_spawn_exec_wait(const char *path)
 	proc_user_run(child);
 	wait_st = proc_wait(PROC_SHELL_PID, child);
 	return wait_st;
+}
+
+int proc_spawn_exec_bg(const char *path)
+{
+	int child;
+	const char *base;
+	char name[PROC_NAME_LEN];
+	int j;
+
+	if (spawn_bg_pid > 0) {
+		uart_puts("bg: one user job already starting\n");
+		return -1;
+	}
+
+	base = path;
+	for (j = 0; path[j]; j++) {
+		if (path[j] == '/')
+			base = path + j + 1;
+	}
+	j = 0;
+	while (base[j] && j < PROC_NAME_LEN - 1) {
+		name[j] = base[j];
+		j++;
+	}
+	name[j] = '\0';
+
+	child = proc_alloc(name, PROC_SHELL_PID);
+	if (child < 0)
+		return -1;
+
+	if (proc_load_elf(child, path) < 0) {
+		proc_set_state(child, PROC_UNUSED);
+		uart_puts("exec: load failed\n");
+		return -1;
+	}
+
+	spawn_bg_pid = child;
+	if (task_create(spawn_bg_trampoline) != 0) {
+		spawn_bg_pid = -1;
+		proc_set_state(child, PROC_UNUSED);
+		uart_puts("bg: task create failed\n");
+		return -1;
+	}
+	return child;
 }
 
 int prog_is_elf_path(const char *path)

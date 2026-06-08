@@ -170,13 +170,22 @@ int uart_read_line(char *buf, int maxlen)
 	int i = 0;
 	reg_t irq = uart_irq_save();
 
-	if (maxlen < 2) {
+	if (!buf || maxlen < 2) {
 		uart_irq_restore(irq);
 		return 0;
 	}
 
 	while (i < maxlen - 1) {
-		int c = uart_getc();
+		int c;
+
+		/*
+		 * Poll with try_getc only — do not call uart_getc() here.
+		 * uart_getc() save/restores IRQ independently; nested restore
+		 * can re-enable timer IRQ during reg_restore and corrupt the
+		 * caller stack (seen as buf==NULL in this frame).
+		 */
+		while ((c = uart_try_getc()) < 0)
+			script_bg_poll();
 
 		if (c == '\r' || c == '\n') {
 			if (c == '\r') {

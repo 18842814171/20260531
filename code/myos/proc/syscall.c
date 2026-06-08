@@ -10,9 +10,8 @@ static int sys_open(const char *path, int flags)
 	char kpath[256];
 	int fd;
 
-	if (copy_from_user(kpath, path, sizeof(kpath) - 1) < 0)
+	if (copyinstr(kpath, path, sizeof(kpath)) < 0)
 		return -1;
-	kpath[sizeof(kpath) - 1] = '\0';
 	return fs_open(kpath, flags);
 }
 
@@ -187,12 +186,11 @@ void do_syscall(struct context *cxt)
 		{
 			char kpath[256];
 
-			if (copy_from_user(kpath, (const void *)(reg_t)cxt->a0,
-					   sizeof(kpath) - 1) < 0) {
+			if (copyinstr(kpath, (const void *)(reg_t)cxt->a0,
+				       sizeof(kpath)) < 0) {
 				ret = -1;
 				break;
 			}
-			kpath[sizeof(kpath) - 1] = '\0';
 			ret = proc_load_elf(pid, kpath);
 			if (ret == 0)
 				proc_user_run(pid);

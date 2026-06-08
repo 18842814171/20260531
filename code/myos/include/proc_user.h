@@ -32,5 +32,6 @@ reg_t proc_user_exit_trap(struct context *cxt);
 int proc_fork(int parent_pid);
 int proc_wait(int parent_pid, int child_pid);
 int proc_spawn_exec_wait(const char *path);
+int proc_spawn_exec_bg(const char *path);
 
 #endif /* __PROC_USER_H__ */

@@ -30,6 +30,12 @@ int      vm_map_user_zero(pagetable_t pt, uint64_t va, uint64_t len, int perm);
 pagetable_t vm_fork_copy(pagetable_t parent);
 uint64_t    vm_pte_at(pagetable_t pt, uint64_t va);
 
+/* User VA -> PA if mapped with PTE_U (xv6 walkaddr). */
+uint64_t    vm_walkaddr(pagetable_t pt, uint64_t va);
+
+/* Demand-map one anonymous user page; returns page PA or 0. */
+uint64_t    vm_user_fault_map(pagetable_t pt, uint64_t va);
+
 /* Kernel page-fault handler: demand-map user anonymous pages (returns 0 if handled). */
 int  vm_fault_handle(int pid, uint64_t stval, reg_t cause);
 

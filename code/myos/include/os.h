@@ -101,8 +101,13 @@ extern void timer_delete(struct timer *timer);
 extern void console_run(void);
 extern void demo_run_tasks(void);
 extern int script_run(const char *path);
+extern int script_run_bg(const char *path);
+extern void script_bg_poll(void);
+/* Fill buf with bg-script status; return 1 if pid is the active bg script job. */
+extern int script_bg_describe(int pid, char *buf, int buflen);
 extern int vi_edit(const char *path);
 extern int proc_spawn_exec_wait(const char *path);
+extern int proc_spawn_exec_bg(const char *path);
 extern int prog_is_elf_path(const char *path);
 extern void trap_use_kernel_cxt(void);
 extern void proc_spawn_worker_demo(void);

@@ -127,8 +127,6 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 				*return_pc = cxt->pc;
 			}
 		} else {
-			if (epc_in_user(epc))
-				cxt->ra = epc + 4;
 			do_syscall(cxt);
 			*return_pc += 4;
 		}
@@ -138,7 +136,8 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 	case 15:
 		stats_inc_page_fault();
 		pid = proc_current_pid();
-		if (pid > 0 && vm_fault_handle(pid, (uint64_t)r_stval(), cause_code) == 0) {
+		if (epc_in_user(epc) && pid > 0 &&
+		    vm_fault_handle(pid, (uint64_t)r_stval(), cause_code) == 0) {
 			*return_pc = epc;
 			break;
 		}

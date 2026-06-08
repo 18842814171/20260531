@@ -6,6 +6,7 @@
 #include "proc_user.h"
 #include "fs.h"
 #include "vm.h"
+#include "shell_env.h"
 
 #define LINE_MAX 128
 #define LOGIN_USER "root"
@@ -87,6 +88,48 @@ static char *find_redirect(char *line, char **target, int *append)
 		p++;
 	}
 	return NULL;
+}
+
+static int str_len(const char *s)
+{
+	int n = 0;
+
+	while (s && s[n])
+		n++;
+	return n;
+}
+
+static int strip_background(char *line)
+{
+	int n = str_len(line);
+
+	while (n > 0 && (line[n - 1] == ' ' || line[n - 1] == '\t'))
+		line[--n] = '\0';
+	if (n > 0 && line[n - 1] == '&') {
+		line[n - 1] = '\0';
+		trim_line(line);
+		return 1;
+	}
+	return 0;
+}
+
+static int looks_like_assign(const char *s)
+{
+	const char *p = s;
+
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p == '\0')
+		return 0;
+	while (*p && *p != '=' && *p != ' ' && *p != '\t')
+		p++;
+	return *p == '=';
+}
+
+static void cmd_export(const char *args)
+{
+	if (shell_env_set_line(args) < 0)
+		uart_puts("export: bad assignment\n");
 }
 
 static int is_poweroff_cmd(const char *line)
@@ -231,6 +274,13 @@ static void cmd_cat(const char *path)
 
 static void cmd_echo(char *args, char *redir, int append)
 {
+	char expanded[256];
+
+	if (args && args[0])
+		shell_env_expand(args, expanded, sizeof(expanded));
+	else
+		expanded[0] = '\0';
+
 	if (redir && redir[0]) {
 		if (append) {
 			int fd = fs_open(redir, O_WRONLY | O_CREAT | O_APPEND);
@@ -239,11 +289,12 @@ static void cmd_echo(char *args, char *redir, int append)
 				uart_puts("echo: write failed\n");
 				return;
 			}
-			if (args && args[0]) {
+			if (expanded[0]) {
 				int i = 0;
-				while (args[i])
+
+				while (expanded[i])
 					i++;
-				fs_write(fd, args, i);
+				fs_write(fd, expanded, i);
 			}
 			fs_write(fd, "\n", 1);
 			fs_close(fd);
@@ -252,17 +303,17 @@ static void cmd_echo(char *args, char *redir, int append)
 			int n = 0;
 			int i = 0;
 
-			if (args && args[0]) {
-				while (args[i] && n < (int)sizeof(out) - 2)
-					out[n++] = args[i++];
+			if (expanded[0]) {
+				while (expanded[i] && n < (int)sizeof(out) - 2)
+					out[n++] = expanded[i++];
 			}
 			out[n++] = '\n';
 			fs_write_file(redir, out, n, 1);
 		}
 		return;
 	}
-	if (args && args[0]) {
-		uart_puts(args);
+	if (expanded[0]) {
+		uart_puts(expanded);
 		uart_putc('\n');
 	}
 }
@@ -368,16 +419,51 @@ static void print_help(void)
 	uart_puts("  cd [dir]        pwd             ls [dir]\n");
 	uart_puts("  cat <file>      touch <file>      vi <file>\n");
 	uart_puts("  echo ...        echo ... > f      echo ... >> f\n");
-	uart_puts("  ./program       sh script.sh\n");
+	uart_puts("  export k=v      k=v               . script.sh [&]\n");
+	uart_puts("  ./program [&]   sh script.sh [&]\n");
 	uart_puts("  ps / ps aux     yebiao [file|P<pid>]  help / logout\n");
+}
+
+static void run_script_path(const char *path, int bg)
+{
+	int pid;
+
+	if (bg) {
+		pid = script_run_bg(path);
+		if (pid > 0) {
+			uart_puts("[bg] pid ");
+			put_dec(pid);
+			uart_putc('\n');
+			script_bg_poll();
+			uart_puts("(background script started)\n");
+		}
+	} else {
+		script_run(path);
+	}
+}
+
+static void run_elf_path(const char *path, int bg)
+{
+	int pid;
+
+	if (bg) {
+		pid = proc_spawn_exec_bg(path);
+		if (pid > 0) {
+			uart_puts("[bg] pid ");
+			put_dec(pid);
+			uart_putc('\n');
+		}
+	} else {
+		proc_spawn_exec_wait(path);
+	}
 }
 
 extern void demo_run_tasks(void);
 
 static void shell_loop(void)
 {
-	char line[LINE_MAX];
-	char prompt[96];
+	static char line[LINE_MAX];
+	static char prompt[96];
 
 	uart_puts("\nWelcome, root.\n");
 	fs_chdir("/home/root");
@@ -386,16 +472,20 @@ static void shell_loop(void)
 	for (;;) {
 		reg_t irq;
 
-		cpu_irq_enable();
+		uart_rx_flush();
 		snprintf(prompt, sizeof(prompt), "root@%s$ ", fs_getcwd());
 		if (uart_prompt_and_read_line(prompt, line, LINE_MAX) < 0)
 			continue;
+		cpu_irq_enable();
 		trim_line(line);
 		if (line[0] == '\0')
 			continue;
 
-		irq = shell_irq_save();
-		if (str_eq(line, "help") || str_eq(line, "?")) {
+		{
+			int bg = strip_background(line);
+
+			irq = shell_irq_save();
+			if (str_eq(line, "help") || str_eq(line, "?")) {
 			print_help();
 		} else if (str_eq(line, "logout") || str_eq(line, "exit")) {
 			uart_puts("Goodbye.\n");
@@ -428,13 +518,19 @@ static void shell_loop(void)
 			if (target)
 				trim_line(target);
 			cmd_echo(args, target, append);
+		} else if (str_prefix(line, "export ")) {
+			cmd_export(skip_word(line + 7));
+		} else if (looks_like_assign(line)) {
+			cmd_export(line);
+		} else if (line[0] == '.' && (line[1] == ' ' || line[1] == '\t')) {
+			run_script_path(skip_word(line + 1), bg);
 		} else if (str_prefix(line, "sh ")) {
-			script_run(skip_word(line + 2));
+			run_script_path(skip_word(line + 2), bg);
 		} else if (str_prefix(line, "./") || (line[0] == '/' && !str_prefix(line, "//"))) {
 			if (str_prefix(line, "./"))
-				proc_spawn_exec_wait(line + 2);
+				run_elf_path(line + 2, bg);
 			else
-				proc_spawn_exec_wait(line);
+				run_elf_path(line, bg);
 		} else if (str_eq(line, "ps")) {
 			cmd_ps(0);
 		} else if (str_eq(line, "ps aux")) {
@@ -453,7 +549,8 @@ static void shell_loop(void)
 		} else {
 			uart_puts("Unknown command. Type 'help'.\n");
 		}
-		shell_irq_restore(irq);
+			shell_irq_restore(irq);
+		}
 	}
 }
 
