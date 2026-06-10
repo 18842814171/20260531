@@ -2,3 +2,6 @@ events/
 out/
 *.txt
 T202510003995291-2331/
+xv6-riscv-riscv/
+__pycache__/
+.venv/
