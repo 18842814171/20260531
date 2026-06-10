@@ -70,7 +70,7 @@ void pmm_init(void)
 
 	pmm_manager->check();
 
-#if CONFIG_LOG
+#if DEBUG == 1
 	{
 		char buf[160];
 
@@ -79,7 +79,7 @@ void pmm_init(void)
 			 "\"npages\":%d,\"nr_free\":%d,\"algo\":\"%s\"",
 			 (unsigned long)pmm_alloc_start, (unsigned long)pmm_alloc_end,
 			 (int)pmm_npages, (int)nr_free_pages(), pmm_manager->name);
-		osviz_event("pmm", "init", buf);
+		LOG_PMM("init", buf);
 	}
 #endif
 }
@@ -87,7 +87,7 @@ void pmm_init(void)
 struct Page *alloc_pages(size_t n)
 {
 	struct Page *p;
-#if CONFIG_LOG
+#if DEBUG == 1
 	char buf[128];
 #endif
 
@@ -95,18 +95,18 @@ struct Page *alloc_pages(size_t n)
 	p = pmm_manager->alloc_pages(n);
 	spin_unlock();
 
-#if CONFIG_LOG
+#if DEBUG == 1
 	if (p) {
 		snprintf(buf, sizeof(buf),
 			 "\"kva\":\"0x%lx\",\"npages\":%d,\"nr_free\":%d,\"algo\":\"%s\"",
 			 (unsigned long)page2kva(p), (int)n, (int)nr_free_pages(),
 			 pmm_manager->name);
-		osviz_event("pmm", "alloc", buf);
+		LOG_PMM("alloc", buf);
 	} else {
 		snprintf(buf, sizeof(buf),
 			 "\"npages\":%d,\"nr_free\":%d,\"ok\":false",
 			 (int)n, (int)nr_free_pages());
-		osviz_event("pmm", "alloc_fail", buf);
+		LOG_PMM("alloc_fail", buf);
 	}
 #endif
 
@@ -115,7 +115,7 @@ struct Page *alloc_pages(size_t n)
 
 void free_pages(struct Page *base, size_t n)
 {
-#if CONFIG_LOG
+#if DEBUG == 1
 	char buf[128];
 	void *kva = page2kva(base);
 #endif
@@ -124,13 +124,13 @@ void free_pages(struct Page *base, size_t n)
 	pmm_manager->free_pages(base, n);
 	spin_unlock();
 
-#if CONFIG_LOG
+#if DEBUG == 1
 	if (base) {
 		snprintf(buf, sizeof(buf),
 			 "\"kva\":\"0x%lx\",\"npages\":%d,\"nr_free\":%d,\"algo\":\"%s\"",
 			 (unsigned long)kva, (int)n, (int)nr_free_pages(),
 			 pmm_manager->name);
-		osviz_event("pmm", "free", buf);
+		LOG_PMM("free", buf);
 	}
 #endif
 }

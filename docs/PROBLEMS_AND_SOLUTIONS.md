@@ -306,23 +306,23 @@ The shell path **`proc_spawn_exec_wait` → `proc_user_run` → user execution �
 
 ---
 
-### 8.3 Interactive `./pagefault` crash after successful user output (open issue)
+### 8.3 Interactive `./pagefault` crash after successful user output (resolved: waitpid page table)
 
-**Problem.** The program printed the expected messages including **`done`**, then the kernel reported **instruction page fault at `sepc = 0`**, **`stval = 0`**, and **`return_pc not in kernel .text or user`**.
+**Problem.** The program printed expected messages including **`done`**, then the kernel reported **instruction page fault at `sepc = 0`**.
 
-**Likely failure point.** After **`SYS_exit`**, the kernel attempted **`sret` to a continuation address of **zero** because **`run_saved_cont` and `run_saved_ra` were both unset** for that process slot, or **`proc_prepare_kernel_return` was skipped**.
+**Root cause (confirmed).** After **`waitpid`** ran the child inside the kernel, **`trap_return_to_user`** resumed the parent in user mode while **`satp` still pointed at the kernel page table**, so the parent’s user code at `0x80400046` was not mapped.
 
-**Hypotheses for investigation.**
+**Resolution.** In `trap_handler`, when returning to user (`trap_return_to_user`), call **`proc_activate_user(proc_current_pid())`** before `sret`. See debug notes in `log/0607-0608debug.md`.
 
-| ID | Hypothesis |
-|----|------------|
-| H1 | **`run_saved_cont` never saved or cleared** on slot reuse |
-| H2 | **`proc_current_pid()` wrong** at exit time |
-| H3 | **Deep user stack** without restore before `crt0` exit path corrupts adjacent metadata |
-| H4 | **High volume of page faults** confuses final exit trap frame selection |
-| H5 | **Stale kernel image** (less likely if strings match rebuilt source) |
+---
 
-**Mitigation under study.** On **`SYS_exit`**, if continuation is null, **panic with explicit PID/slot** instead of **`sret` to zero**. Compare **AUTORUN** vs **interactive shell** spawn. Optionally restore **`sp`** before exit syscall in the test program to isolate H3.
+### 8.4 Fork child re-executing `fork` (resolved)
+
+**Problem.** Runaway fork / physical page exhaustion.
+
+**Root cause.** Child’s **`pc` still pointed at the `ecall` instruction**; syscall return advanced parent only.
+
+**Resolution.** On **`proc_fork`**, set child **`a0 = 0`** and advance child **`pc` past the `ecall`**.
 
 ---
 
@@ -348,12 +348,53 @@ These items are **design guidance**, not bugs in myos per se.
 | After editing `home/root/*.c`: **user compile script + full kernel rebuild** | Stale ELF in ramfs causes silent wrong-code faults |
 | Use **`x/4wx` at user PC** before trusting debugger single-step | Separates **memory/load bugs** from **trap/sscratch bugs** |
 | Do not enable **UART IRQ RX** while shell uses **polling** | Prevents double-consumption of RX bytes |
+| Web UI: wait for **`Welcome, root.`** before judging terminal | Static HTML prompt is not a readiness indicator |
+| After Web demux changes, restart **`start_server.sh`** and hard-refresh browser | Avoid stale client-side LOG filtering |
 
 ---
 
-## 11. Chronological Arc (one paragraph)
+## 11. Web Frontend and Serial Demux
 
-Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **`proc_user_run` / `proc_wait`** required **per-process trap frames**, **kernel `gp` in the trap vector**, **`after_uspace` continuation on exit**, and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and observability via **`yebiao`**, with **interactive `pagefault` teardown at `sepc=0`** still under investigation.
+### 11.1 LOG lines mixed with shell text in browser terminal
+
+**Problem.** After adding kernel `LOG {...}` output, the Web terminal showed JSON lines interleaved with login and shell I/O. Client-side regex filtering caused sticky packets, truncated JSON, and swallowed login prompts.
+
+**Root cause.** A **single QEMU serial stream** was forwarded verbatim as WebSocket `output`. The frontend tried to strip `LOG` lines after the fact.
+
+**Resolution.** **`SerialDemux` in `code/web/server.py`**: classify complete lines into WebSocket types `event`, `snapshot`, and `output`. Remove client `stripEvents` parsing. See [05_web_frontend.md](05_web_frontend.md).
+
+---
+
+### 11.2 Program output missing (e.g. `./hi`) while event bubbles update
+
+**Problem.** User runs `./hi`; right panel shows `proc`/`trap` events but terminal never prints `hi from ./hi`.
+
+**Root cause (dual).**
+
+1. **Terminal gate:** Output before **`Welcome, root.`** is dropped. The HTML prompt label is static and misleading.
+2. **Line splitting:** Early demux flushed partial lines without `\n`, splitting `Welcome, root.` across messages so the welcome detector never fired; **`termGateOpen` stayed false** and all post-login `output` was discarded.
+
+**Resolution.**
+
+- Accumulate **`preShellBuf`** across WebSocket messages until welcome is found.
+- Hold non-LOG partial lines until newline before emitting `output`.
+- Local-echo commands in **`sendCommand`** when the shell is ready.
+
+---
+
+### 11.3 Misclassification of user text as LOG (avoidance)
+
+**Problem.** Fear that strings like `hi from ./hi` would route to the event panel.
+
+**Root cause analysis.** Demux only promotes lines that **start with** `LOG ` or `LOG_SNAPSHOT ` **and** parse as JSON objects. Normal program output does not match.
+
+**Note.** Lines that literally start with `LOG ` but contain invalid JSON fall back to **`output`**.
+
+---
+
+## 12. Chronological Arc (one paragraph)
+
+Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **`proc_user_run` / `proc_wait`** required **per-process trap frames**, **kernel `gp` in the trap vector**, **`after_uspace` continuation on exit**, and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **Observability** added macro-gated **`LOG_*`** (my_sim style) and a **LibertyOS Web UI** with **server-side serial demux** separating terminal text from structured events.
 
 ---
 

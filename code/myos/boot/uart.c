@@ -68,7 +68,7 @@ void uart_irq_enable(void)
 {
 	/* Console RX is poll-only; keep UART interrupts disabled. */
 	uart_write_reg(UART_IER, 0x00);
-	osviz_event("irq", "uart_init", "\"rx_irq\":false,\"rx_poll\":true");
+	LOG_IRQ("uart_init", "\"rx_irq\":false,\"rx_poll\":true");
 }
 
 int uart_putc(char ch)

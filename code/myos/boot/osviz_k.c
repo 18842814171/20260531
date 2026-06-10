@@ -18,7 +18,7 @@ extern reg_t boot_dtb;
 
 static uint64_t boot_mtime;
 
-#if CONFIG_LOG
+#if DEBUG == 1
 
 void osviz_init(void)
 {
@@ -105,7 +105,7 @@ void osviz_boot_banner(void)
 	osviz_event("boot", "banner", "\"version\":\"" MYOS_VERSION "\"");
 }
 
-#else /* CONFIG_LOG */
+#else /* DEBUG != 1 */
 
 void osviz_init(void)
 {
@@ -133,4 +133,4 @@ void osviz_boot_banner(void)
 {
 }
 
-#endif /* CONFIG_LOG */
+#endif /* DEBUG */

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>日志气泡 - RISC-V Trap 中英对照</title>
+<style>
+  body {
+    font-family: 'Segoe UI', 'Microsoft YaHei', monospace;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 40px;
+    display: flex;
+    gap: 40px;
+    align-items: flex-start;
+  }
+
+  .console {
+    width: 420px;
+    background: #0d1117;
+    border: 2px solid #30363d;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+  }
+  .console-header {
+    background: #21262d;
+    padding: 6px 10px;
+    border-radius: 6px 6px 0 0;
+    margin: -12px -12px 12px;
+    font-size: 12px;
+    color: #8b949e;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .log-bubble {
+    max-width: 620px;
+    background: linear-gradient(145deg, #2d2d2d, #252526);
+    border-radius: 18px;
+    padding: 16px 20px;
+    position: relative;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+    border: 1px solid #3c3c3c;
+    margin-bottom: 22px;
+  }
+
+  .log-bubble:after {
+    content: '';
+    position: absolute;
+    left: -14px;
+    top: 28px;
+    border: 8px solid transparent;
+    border-right-color: #2d2d2d;
+  }
+
+  .bubble-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #3c3c3c;
+  }
+
+  .module-tag { background: #238636; color: white; font-size: 12px; padding: 2px 8px; border-radius: 9999px; font-weight: 600; }
+  .event-tag { background: #8957e5; color: white; font-size: 12px; padding: 2px 8px; border-radius: 9999px; font-weight: 500; }
+  .timestamp { margin-left: auto; font-size: 12px; color: #8b949e; }
+
+  .log-content { font-size: 13.5px; line-height: 1.65; }
+  .log-line {
+    margin: 8px 0;
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+  }
+  .log-key {
+    color: #58a6ff;
+    min-width: 160px;
+    flex-shrink: 0;
+    cursor: help;
+    position: relative;
+  }
+  .log-key:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: 100%;
+    top: -6px;
+    background: #1f252e;
+    color: #c9d1d9;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    white-space: nowrap;
+    z-index: 20;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.6);
+    border: 1px solid #3c3c3c;
+  }
+
+  .log-value { 
+    color: #a5d6ff; 
+    word-break: break-all;
+  }
+  .log-value.string { color: #a3c95f; }
+  .log-value.number { color: #f0883e; }
+
+  .value-desc {
+    font-size: 12.5px;
+    color: #8b949e;
+    margin-top: 2px;
+    margin-left: 172px;
+  }
+
+  /* 右侧参考面板 */
+  .reference-panel {
+    width: 360px;
+    background: #252526;
+    border: 1px solid #3c3c3c;
+    border-radius: 12px;
+    padding: 18px;
+    font-size: 13.5px;
+    position: sticky;
+    top: 20px;
+    align-self: flex-start;
+  }
+  .ref-title {
+    font-size: 16px;
+    margin-bottom: 14px;
+    color: #58a6ff;
+    border-bottom: 1px solid #3c3c3c;
+    padding-bottom: 8px;
+  }
+</style>
+</head>
+<body>
+
+  <!-- 控制台 -->
+  <div class="console">
+    <div class="console-header">
+      <span>kernel console</span>
+      <span>hart 0 • riscv</span>
+    </div>
+    <div style="color:#8b949e;">
+      [  155] trap: user irq enter<br>
+      [  158] trap: leave handler<br>
+      [  160] trap-diag: leave_handler
+    </div>
+  </div>
+
+  <!-- 日志气泡容器 -->
+  <div style="flex:1; max-width: 640px;">
+
+    <!-- 第一个气泡 -->
+    <div class="log-bubble">
+      <div class="bubble-header">
+        <span class="module-tag">trap</span>
+        <span class="event-tag">enter</span>
+        <span class="timestamp">155 ms</span>
+      </div>
+      <div class="log-content">
+        <div class="log-line">
+          <span class="log-key" data-tooltip="当前硬件线程 (Hardware Thread)">hart (硬件线程)</span>
+          <span class="log-value number">0</span>
+        </div>
+        <div class="log-line">
+          <span class="log-key" data-tooltip="进程ID (Process ID)">pid (进程ID)</span>
+          <span class="log-value number">2</span>
+        </div>
+        <div class="log-line">
+          <span class="log-key" data-tooltip="当前特权模式">mode (特权模式)</span>
+          <span class="log-value string">"user"</span>
+        </div>
+        <div class="log-line">
+          <span class="log-key" data-tooltip="异常程序计数器">epc (异常程序计数器)</span>
+          <span class="log-value string">"0x0000000080400084"</span>
+        </div>
+        <div class="log-line">
+          <span class="log-key" data-tooltip="陷阱类型">kind (陷阱类型)</span>
+          <span class="log-value string">"irq"</span>
+        </div>
+        <div class="log-line">
+          <span class="log-key" data-tooltip="中断/异常编号">code (中断编号)</span>
+          <span class="log-value number">5</span>
+        </div>
+        <div class="value-desc">5 = Supervisor Timer Interrupt (监督者定时器中断)</div>
+      </div>
+    </div>
+
+    <!-- 第二个气泡 -->
+    <div class="log-bubble">
+      <div class="bubble-header">
+        <span class="module-tag">trap</span>
+        <span class="event-tag">leave</span>
+        <span class="timestamp">158 ms</span>
+      </div>
+      <div class="log-content">
+        <div class="log-line">
+          <span class="log-key" data-tooltip="陷阱嵌套深度">depth (嵌套深度)</span>
+          <span class="log-value number">1</span>
+        </div>
+        <div class="log-line">
+          <span class="log-key" data-tooltip="返回地址">return_pc (返回地址)</span>
+          <span class="log-value string">"0x0000000080400084"</span>
+        </div>
+        <div class="log-line">
+          <span class="log-key" data-tooltip="陷阱原因 (scause)">cause (陷阱原因)</span>
+          <span class="log-value string">"0x8000000000000005"</span>
+        </div>
+        <div class="value-desc">0x8000000000000005 = Interrupt (中断) + 5 = Supervisor Timer Interrupt (监督者定时器中断)</div>
+      </div>
+    </div>
+
+    <!-- 第三个气泡 -->
+    <div class="log-bubble">
+      <div class="bubble-header">
+        <span class="module-tag">trap-diag</span>
+        <span class="event-tag">leave_handler</span>
+        <span class="timestamp">160 ms</span>
+      </div>
+      <div class="log-content">
+        <div class="log-line">
+          <span class="log-key" data-tooltip="返回的 sepc 值">ret_sepc (返回 sepc)</span>
+          <span class="log-value string">"0x0000000080400084"</span>
+        </div>
+        <div class="log-line">
+          <span class="log-key" data-tooltip="临时寄存器">sscratch (临时寄存器)</span>
+          <span class="log-value string">"0x0000000000000000"</span>
+        </div>
+        <div class="log-line">
+          <span class="log-key" data-tooltip="监督者状态寄存器">sstatus (监督者状态寄存器)</span>
+          <span class="log-value string">"0x8000000000046020"</span>
+        </div>
+        <div class="value-desc">SPP=1 (来自Supervisor) | SIE=1 (中断已启用)</div>
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>

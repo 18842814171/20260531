@@ -37,7 +37,7 @@ void machine_poweroff(void)
 	uart_puts("\nShutting down myos...\n");
 
 #ifdef CONFIG_OPENSBI
-	osviz_event("boot", "poweroff", "\"action\":\"sbi_shutdown\"");
+	LOG_BOOT("poweroff", "\"action\":\"sbi_shutdown\"");
 	sbi_shutdown();
 #endif
 

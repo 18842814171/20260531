@@ -519,7 +519,7 @@ static void shell_loop(void)
 				trim_line(target);
 			cmd_echo(args, target, append);
 		} else if (str_prefix(line, "export ")) {
-			cmd_export(skip_word(line + 7));
+			cmd_export(line + 7);
 		} else if (looks_like_assign(line)) {
 			cmd_export(line);
 		} else if (line[0] == '.' && (line[1] == ' ' || line[1] == '\t')) {
@@ -541,7 +541,7 @@ static void shell_loop(void)
 		} else if (str_eq(line, "run task") || str_eq(line, "task")) {
 			demo_run_tasks();
 		} else if (str_eq(line, "snapshot") || str_eq(line, "~snapshot")) {
-			osviz_snapshot();
+			LOG_SNAPSHOT();
 		} else if (str_prefix(line, "yebiao ")) {
 			cmd_yebiao(skip_word(line + 6));
 		} else if (str_eq(line, "yebiao")) {
@@ -557,8 +557,8 @@ static void shell_loop(void)
 void console_run(void)
 {
 	for (;;) {
-		uart_puts("\n=== myos console ===\n");
-		//login_session();
+		uart_puts("\n=== libertyos console ===\n");
+		login_session();
 		shell_loop();
 	}
 }

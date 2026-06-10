@@ -190,6 +190,11 @@ static void vm_free_user_pages(pagetable_t pt)
 	}
 }
 
+void vm_clear_user_pages(pagetable_t pt)
+{
+	vm_free_user_pages(pt);
+}
+
 void vm_destroy(pagetable_t pt)
 {
 	if (!pt || pt == kernel_pt)

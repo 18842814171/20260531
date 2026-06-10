@@ -21,6 +21,9 @@ void     vm_init(void);
 pagetable_t vm_kernel_pt(void);
 pagetable_t vm_create(void);
 void     vm_destroy(pagetable_t pt);
+
+/* Drop user 4KiB mappings (exec reload); leaves kernel map and page-table nodes. */
+void     vm_clear_user_pages(pagetable_t pt);
 void     vm_activate(pagetable_t pt);
 
 int      vm_map_2m(pagetable_t pt, uint64_t va, uint64_t pa, int perm);

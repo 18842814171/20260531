@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LibertyOS — Desktop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="css/global.css">
+</head>
+<body>
+  <div class="desktop">
+    <header class="desktop__header">
+      <div class="desktop__brand">LIBERTY<span>OS</span></div>
+      <div class="desktop__status">
+        <span class="desktop__status-dot" id="status-dot"></span>
+        <span id="status-text">连接中...</span>
+        <span>root@/home/root</span>
+        <span id="clock"></span>
+      </div>
+    </header>
+
+    <div class="desktop__main">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar__user">
+          <div class="sidebar__avatar">R</div>
+          <div class="sidebar__user-info">
+            <div class="sidebar__username">root</div>
+            <div class="sidebar__cwd" id="sidebar-cwd">/home/root</div>
+          </div>
+        </div>
+
+        <nav class="sidebar__nav" id="sidebar-nav">
+          <button class="sidebar__nav-item sidebar__nav-item--active" type="button" data-view="desktop">
+            <span class="sidebar__nav-icon"><i class="bi bi-display" aria-hidden="true"></i></span>
+            <span>桌面</span>
+          </button>
+          <button class="sidebar__nav-item" type="button" data-view="files">
+            <span class="sidebar__nav-icon"><i class="bi bi-folder2-open" aria-hidden="true"></i></span>
+            <span>文件</span>
+          </button>
+          <button class="sidebar__nav-item sidebar__nav-item--disabled" type="button" disabled title="暂未开放">
+            <span class="sidebar__nav-icon"><i class="bi bi-gear" aria-hidden="true"></i></span>
+            <span>设置</span>
+          </button>
+        </nav>
+
+        <!-- 桌面视图：快捷启动 -->
+        <div class="sidebar__panel" id="panel-desktop" data-view="desktop">
+          <div class="sidebar__section-head">
+            <span class="sidebar__section-title">快捷启动</span>
+          </div>
+          <div class="sidebar__icons" id="desktop-icons"></div>
+          <p class="sidebar__hint">双击图标运行程序；查看文件请点上方「文件」</p>
+        </div>
+
+        <!-- 文件视图：文件列表 -->
+        <div class="sidebar__panel hidden" id="panel-files" data-view="files">
+          <div class="sidebar__section-head">
+            <span class="sidebar__section-title">/home/root</span>
+            <button class="btn btn--sm" id="btn-refresh-files" type="button" title="刷新文件列表">
+              <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="file-tree" id="file-tree"></div>
+        </div>
+      </aside>
+
+      <!-- 中间：文件预览 + 终端 -->
+      <div class="workspace">
+        <section class="file-panel" id="file-panel">
+          <div class="file-panel__toolbar">
+            <div class="file-panel__title">
+              <span class="file-panel__icon"><i class="bi bi-file-earmark-text" aria-hidden="true"></i></span>
+              <span id="file-viewer-title">文件预览</span>
+            </div>
+            <button class="btn btn--sm hidden" id="file-viewer-close" type="button">关闭</button>
+          </div>
+          <div class="file-panel__body">
+            <div class="file-panel__placeholder" id="file-placeholder">
+              <span class="file-panel__placeholder-icon"><i class="bi bi-folder2" aria-hidden="true"></i></span>
+              <span>在左侧「文件」中点击文本或源码文件，内容将显示在这里</span>
+            </div>
+            <pre class="file-panel__content hidden" id="file-viewer-content"></pre>
+          </div>
+        </section>
+
+        <section class="console-panel console-panel--compact">
+          <div class="console-panel__toolbar">
+            <div class="console-panel__title">
+              <div class="console-panel__dots">
+                <span class="console-panel__dot console-panel__dot--red"></span>
+                <span class="console-panel__dot console-panel__dot--yellow"></span>
+                <span class="console-panel__dot console-panel__dot--green"></span>
+              </div>
+              <span>终端</span>
+            </div>
+            <div class="console-panel__actions">
+              <button class="btn" id="btn-reconnect">重连</button>
+              <button class="btn" id="btn-clear">清屏</button>
+              <button class="btn" id="btn-logout">退出</button>
+            </div>
+          </div>
+
+          <div class="console">
+            <div class="console__output" id="console-output"></div>
+            <div class="console__input-row">
+              <span class="console__prompt-label" id="console-prompt">root@/home/root$ </span>
+              <input class="console__input" id="console-input" type="text"
+                     placeholder="等待连接..."
+                     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                     aria-label="Shell command input" disabled>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- 右侧：事件日志（全高） -->
+      <aside class="log-bubble-panel" id="log-bubble-panel">
+        <div class="log-bubble-panel__header">
+          <div class="log-bubble-panel__title">
+            <i class="bi bi-list-ul"></i>
+            <span>事件日志</span>
+            <span class="log-bubble-panel__badge" id="log-count-badge">0</span>
+          </div>
+        </div>
+        <div class="log-bubble-list" id="log-bubble-list">
+          <div class="log-bubble-empty" id="log-bubble-empty">
+            <i class="bi bi-inbox"></i>
+            <span>等待 kernel 事件…</span>
+            <span class="log-bubble-empty__hint">LOG · trap · boot · syscall</span>
+          </div>
+        </div>
+        <div class="log-bubble-pager">
+          <button class="btn btn--sm" id="log-prev" type="button" disabled>上一页</button>
+          <span class="log-bubble-pager__info" id="log-page-info">0 / 0</span>
+          <button class="btn btn--sm" id="log-next" type="button" disabled>下一页</button>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="js/global.js"></script>
+  <script src="js/logs.js"></script>
+  <script src="js/terminal.js"></script>
+  <script src="js/files.js"></script>
+  <script src="js/desktop.js"></script>
+  <script>
+    function updateClock() {
+      const el = document.getElementById('clock');
+      if (el) el.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+  </script>
+</body>
+</html>

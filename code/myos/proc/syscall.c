@@ -115,7 +115,7 @@ static int sys_fork(struct context *cxt)
 
 		snprintf(buf, sizeof(buf),
 			 "\"parent\":%d,\"child\":%d", parent, child);
-		osviz_event("proc", "fork", buf);
+		LOG_PROC("fork", buf);
 	}
 	return child;
 }
@@ -192,19 +192,17 @@ void do_syscall(struct context *cxt)
 				break;
 			}
 			ret = proc_load_elf(pid, kpath);
-			if (ret == 0)
-				proc_user_run(pid);
 		}
 		break;
 	case SYS_osviz_event:
 		if (cxt->a0 && cxt->a1)
-			osviz_event((const char *)(reg_t)cxt->a0,
-				    (const char *)(reg_t)cxt->a1,
-				    cxt->a2 ? (const char *)(reg_t)cxt->a2 : NULL);
+			LOG_EVENT((const char *)(reg_t)cxt->a0,
+				  (const char *)(reg_t)cxt->a1,
+				  cxt->a2 ? (const char *)(reg_t)cxt->a2 : NULL);
 		ret = 0;
 		break;
 	case SYS_osviz_snap:
-		osviz_snapshot();
+		LOG_SNAPSHOT();
 		ret = 0;
 		break;
 	default:

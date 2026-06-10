@@ -4,7 +4,7 @@
 **User isolation:** Sv39 per-process page tables; user VA window `0x80400000`–`0x80480000`.  
 **Console:** MMIO NS16550 @ `0x10000000` (poll-only on the shell path).
 
-This document describes overall structure, boot flow, and core execution paths.
+This document describes overall structure, boot flow, observability, and core execution paths.
 
 ---
 
@@ -28,19 +28,27 @@ boot/start.S
 start_kernel()                    [boot/kernel.c]
   • uart_init()
   • trap_init()                   stvec = trap_vector
-  • osviz_init()
+  • LOG_INIT() / LOG_BOOT_BANNER()
   • fs_init()                     ramfs + embedded /home
   • proc_init() / proc_user_init()
-  • page_init()
+  • pmm_init()                    physical page allocator
   • vm_init()                     Sv39 kernel page table
   • plic_init()
   • uart_irq_enable()             RX IRQ off; poll for shell
-  • timer_init()                    ~100 Hz via SBI set_timer
-  • sched_init()                    soft-IRQ hook for demo tasks
-  • os_main()                       (placeholder)
+  • timer_init()                  ~100 Hz via SBI set_timer
+  • sched_init()                  soft-IRQ hook for demo tasks
+  • os_main()                     (placeholder)
   • cpu_irq_enable()
   • console_run()  OR  debug_autorun_user_and_exit()
 ```
+
+**Build flags**
+
+| Flag | Effect |
+|------|--------|
+| `make` (default) | `-DDEBUG=1 -DCONFIG_LOG=1` — kernel `LOG_*` macros emit JSON |
+| `make DEBUG=0` | All `LOG_*` compile to no-ops; no `LOG {...}` on serial |
+| `make AUTORUN=hi` | Skip login; run one user ELF then poweroff |
 
 **Core paths to remember**
 
@@ -52,6 +60,7 @@ start_kernel()                    [boot/kernel.c]
 | **File (kernel)** | Shell `cat`/`ls` → `fs_*` on ramfs (no syscall) |
 | **File (user)** | `ecall` → `sys_open`/`read`/`write` → `fs_*` + `copy_*_user` |
 | **Scheduling** | Timer IRQ → `timer_handler`; preemptive `schedule()` **disabled** on OpenSBI build; demo `spawn worker` uses `task_create` + `switch_to` |
+| **Observability** | `LOG_*` → `printf` → UART; optional host capture / Web demux (see §8) |
 
 ---
 
@@ -71,8 +80,8 @@ start_kernel()                    [boot/kernel.c]
                     └──────────────────┬──────────────────┘
          ┌─────────────────────────────┼─────────────────────────────┐
          │              Kernel core (S-mode)                        │
-         │  Process (proc, proc_user)  Memory (page, vm)             │
-         │  Scheduler (sched — demo tasks)  Stats / osviz            │
+         │  Process (proc, proc_user)  Memory (pmm, vm)             │
+         │  Scheduler (sched — demo tasks)  LOG_* / trap_diag       │
          └─────────────────────────────┬─────────────────────────────┘
                                        │
          ┌─────────────────────────────┼─────────────────────────────┐
@@ -95,14 +104,15 @@ start_kernel()                    [boot/kernel.c]
 
 | Module | Primary paths | Responsibility |
 |--------|---------------|----------------|
-| **Boot** | `boot/start.S`, `boot/kernel.c`, `boot/uart.c`, `boot/power.c` | Entry, init order, UART, shutdown |
-| **Trap / IRQ** | `interrupt/entry.S`, `interrupt/trap.c`, `interrupt/timer.c`, `interrupt/plic.c` | `trap_vector`, exceptions, timer, PLIC stub |
-| **Memory** | `mem/page.c`, `mem/vm.c` | Physical pages, Sv39 walk/map/activate, demand faults |
+| **Boot** | `boot/start.S`, `boot/kernel.c`, `boot/uart.c`, `boot/power.c`, `boot/osviz_k.c` | Entry, init order, UART, shutdown, structured LOG |
+| **Trap / IRQ** | `interrupt/entry.S`, `interrupt/trap.c`, `interrupt/timer.c`, `interrupt/plic.c`, `interrupt/trap_diag.c` | `trap_vector`, exceptions, timer, optional trap UART diag |
+| **Memory** | `mem/pmm.c`, `mem/default_pmm.c`, `mem/vm.c` | Physical pages (`alloc_pages`), Sv39 walk/map/activate, demand faults |
 | **Process** | `proc/proc.c`, `proc/proc_user.c`, `proc/syscall.c`, `proc/copy_user.c`, `proc/sched.c` | PCB, ELF exec, fork/wait, syscalls, uaccess |
 | **Filesystem** | `fs/fs.c`, `fs/home_data.c`, `tools/pack_home.py` | In-memory ramfs, embedded home image |
 | **Console** | `usr/console.c`, `usr/autorun.c` | Login, shell commands, `./prog` spawn |
 | **User binaries** | `home/root/*.c`, `usr/crt0.S`, `ld/user.ld` | Programs linked for user VA |
-| **Observability** | `boot/osviz_k.c`, `interrupt/trap_diag.c` | Structured LOG events, optional trap UART diag |
+| **Web** | `code/web/server.py`, `code/web/js/*.js` | Browser terminal + event bubbles over WebSocket |
+| **Host osviz** | `code/osviz/bridge/serial_reader.py`, `code/osviz/src/log.c` | Optional file capture; Linux userspace log API |
 
 ---
 
@@ -125,6 +135,7 @@ start_kernel()                    [boot/kernel.c]
 
 - **Shell** runs in the kernel (logical PID `PROC_SHELL_PID` = 1); it does not have a user page table until it spawns a child.
 - **Child processes** get `vm_create()` on `proc_load_elf`, `vm_activate()` in `proc_user_run`, restored to `vm_kernel_pt()` at `after_uspace`.
+- **Return to user after nested kernel work** (e.g. `waitpid` running child): `trap_handler` calls `proc_activate_user` when `trap_return_to_user` is set so the parent page table is active before `sret`.
 
 ---
 
@@ -149,7 +160,7 @@ Return to kernel after SYS_exit:
 
 ---
 
-## 6. Data flow: interactive session
+## 6. Data flow: interactive session (QEMU serial)
 
 ```text
 Host keyboard
@@ -169,14 +180,56 @@ Host keyboard
 
 ---
 
-## 7. Related documents
+## 7. Data flow: Web UI session
+
+```text
+Browser (desktop.html)
+  ├─ WebSocket /ws/ssh  ←→  code/web/server.py (PTY)
+  │                              │
+  │                              └─ bash -lc start_qemu.sh (DEBUG=n)
+  │                                     └─ exec qemu-system-riscv64 …
+  │
+  ├─ type=output   → terminal pane (shell text only)
+  ├─ type=event    → log bubbles (parsed LOG JSON)
+  └─ type=snapshot → LOG_SNAPSHOT stats card
+
+Single QEMU serial byte stream; server.py SerialDemux splits by line:
+  LOG {...}        → event
+  LOG_SNAPSHOT …   → snapshot
+  everything else  → output
+```
+
+See [05_web_frontend.md](05_web_frontend.md) and [04_logging_and_osviz.md](04_logging_and_osviz.md).
+
+---
+
+## 8. Observability (summary)
+
+```text
+Kernel (DEBUG=1):
+  LOG_BOOT / LOG_TRAP / LOG_PROC / …  [include/osviz_k.h]
+        → osviz_event()               [boot/osviz_k.c]
+        → printf("LOG {...}\n")       → UART
+
+Host (optional, non-Web):
+  serial_reader.py  →  code/osviz/events/events.jsonl
+
+Web (current):
+  server.py demux   →  WebSocket typed messages (no file write yet)
+```
+
+---
+
+## 9. Related documents
 
 | Document | Contents |
 |----------|----------|
-| [02_call_chains.md](02_call_chains.md) | Step-by-step call trees (syscall, trap, exec, file I/O) |
-| [03_module_index.md](03_module_index.md) | Per-module entry / core / exit functions |
+| [02_call_chains.md](02_call_chains.md) | Step-by-step call trees |
+| [03_module_index.md](03_module_index.md) | Per-module entry / core / exit |
+| [04_logging_and_osviz.md](04_logging_and_osviz.md) | LOG macros, formats, host tools |
+| [05_web_frontend.md](05_web_frontend.md) | Web stack, terminal gate, demux |
 | [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | Historical defects and fixes |
 
 ---
 
-*Paths and symbols refer to `code/myos/` as of the Sv39 + `proc_spawn_exec_wait` design.*
+*Paths and symbols refer to `code/myos/` as of Sv39 + `proc_spawn_exec_wait` + Web serial demux.*

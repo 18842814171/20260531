@@ -6,6 +6,7 @@
 struct context;
 
 #define PROC_SHELL_PID  1
+#define PROC_FAULT_EXIT (-1)
 #define USER_MEM_BASE   0x80400000UL
 #define USER_MEM_END    0x80480000UL
 #define USER_MEM_SIZE   0x00080000UL
@@ -22,12 +23,18 @@ struct context *proc_user_trap_frame(void);
 struct context *trap_get_user_frame(reg_t kstack_top);
 void proc_enter_uspace(int pid, struct context *uc, reg_t kstack_top);
 
+void proc_activate_user(int pid);
+void proc_activate_kernel(void);
+
 int proc_load_elf(int pid, const char *path);
 int proc_user_run(int pid);
 void proc_user_exit(int pid, int status);
 
 /* Handle SYS_exit: mark zombie and return kernel continuation (never user). */
 reg_t proc_user_exit_trap(struct context *cxt);
+
+/* Unhandled user page fault: kill process, return to proc_user_run caller. */
+reg_t proc_user_fault_trap(struct context *cxt);
 
 int proc_fork(int parent_pid);
 int proc_wait(int parent_pid, int child_pid);

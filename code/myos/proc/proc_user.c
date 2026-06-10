@@ -114,6 +114,22 @@ void proc_set_current_pid(int pid)
 	current_pid = pid;
 }
 
+void proc_activate_user(int pid)
+{
+	pagetable_t pt;
+
+	if (pid <= 0)
+		return;
+	pt = proc_pagetable(pid);
+	if (pt)
+		vm_activate(pt);
+}
+
+void proc_activate_kernel(void)
+{
+	vm_activate(vm_kernel_pt());
+}
+
 void proc_user_init(void)
 {
 	int i;
@@ -177,12 +193,16 @@ int proc_load_elf(int pid, const char *path)
 
 	{
 		pagetable_t old_pt = proc_pagetable(pid);
-		pagetable_t pt = vm_create();
+		pagetable_t pt;
 
-		if (!pt)
-			return -1;
-		if (old_pt)
-			vm_destroy(old_pt);
+		if (old_pt) {
+			vm_clear_user_pages(old_pt);
+			pt = old_pt;
+		} else {
+			pt = vm_create();
+			if (!pt)
+				return -1;
+		}
 		proc_set_pagetable(pid, pt);
 	}
 
@@ -302,12 +322,12 @@ int proc_user_run(int pid)
 
 	proc_set_state(pid, PROC_RUNNING);
 	proc_save_run_cont(pid, (reg_t)&&after_uspace);
-	vm_activate(proc_pagetable(pid));
+	proc_activate_user(pid);
 	proc_enter_uspace(pid, uc, ktop);
 after_uspace:
 	proc_gdb_checkpoint(1, pid, uc);
 	printf("proc_user_run: pid=%d returned from user\n", pid);
-	vm_activate(vm_kernel_pt());
+	proc_activate_kernel();
 	trap_scratch_init(0);
 	current_pid = saved_pid;
 	printf("\nproc_user_run returns 0...\n\n");
@@ -334,7 +354,7 @@ reg_t proc_user_exit_trap(struct context *cxt)
 	if (pid <= 0)
 		return 0;
 
-	vm_activate(vm_kernel_pt());
+	proc_activate_kernel();
 	status = (unsigned int)cxt->a0;
 	if (status > 255)
 		status = 0;
@@ -344,6 +364,24 @@ reg_t proc_user_exit_trap(struct context *cxt)
 	ret = cont ? cont : proc_run_saved_ra(pid);
 	if (!ret || (ret >= USER_MEM_BASE && ret < USER_MEM_END))
 		panic("proc_user_exit_trap: bad kernel return");
+	return ret;
+}
+
+reg_t proc_user_fault_trap(struct context *cxt)
+{
+	int pid = proc_current_pid();
+	reg_t cont, ret;
+
+	if (pid <= 0)
+		return 0;
+
+	proc_activate_kernel();
+	proc_user_exit(pid, PROC_FAULT_EXIT);
+	proc_prepare_kernel_return(cxt, pid);
+	cont = proc_run_saved_cont(pid);
+	ret = cont ? cont : proc_run_saved_ra(pid);
+	if (!ret || (ret >= USER_MEM_BASE && ret < USER_MEM_END))
+		panic("proc_user_fault_trap: bad kernel return");
 	return ret;
 }
 

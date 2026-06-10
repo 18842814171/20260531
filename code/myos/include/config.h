@@ -5,6 +5,8 @@
 #define CONFIG_LOG 1
 #endif
 
+/* DEBUG mirrors CONFIG_LOG; Makefile sets both via make DEBUG=0|1. */
+
 /*
  * Non-interactive boot: run one user program from /home/root then poweroff.
  * Set at build time: make AUTORUN=return0

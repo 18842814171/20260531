@@ -79,7 +79,7 @@ static void trap_log_first_return(reg_t return_pc, reg_t trap_epc)
 		 "\"depth\":1,\"return_pc\":\"0x%lx\",\"trap_epc\":\"0x%lx\","
 		 "\"cause\":\"0x%lx\"",
 		 (long)return_pc, (long)trap_epc, (long)r_scause());
-	osviz_event("trap", "leave", d);
+	LOG_TRAP("leave", d);
 }
 
 static void trap_check_return_pc(reg_t return_pc, reg_t trap_epc)
@@ -103,6 +103,15 @@ static void trap_check_return_pc(reg_t return_pc, reg_t trap_epc)
 	panic(why);
 }
 
+static int trap_from_user(void)
+{
+#ifdef CONFIG_OPENSBI
+	return !(r_sstatus() & SSTATUS_SPP);
+#else
+	return (r_mstatus() & MSTATUS_MPP) == 0;
+#endif
+}
+
 static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *cxt,
 				  reg_t *return_pc)
 {
@@ -120,15 +129,29 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 #ifdef CONFIG_OPENSBI
 				w_sstatus(r_sstatus() | SSTATUS_SPP);
 #endif
-				osviz_event("proc", "exit", "\"from\":\"user\"");
+				LOG_PROC("exit", "\"from\":\"user\"");
 			} else {
 				task_exit_to_idle(cxt, (int)cxt->a0);
-				osviz_event("proc", "exit", NULL);
+				LOG_PROC("exit", NULL);
 				*return_pc = cxt->pc;
 			}
 		} else {
+			int was_execve = (cxt->a7 == SYS_execve);
+
 			do_syscall(cxt);
-			*return_pc += 4;
+			if (was_execve && (long)cxt->a0 == 0) {
+				int cpid = proc_current_pid();
+				struct context *uc = proc_user_ctx(cpid);
+				reg_t ktop = proc_kstack_top(cpid);
+
+				if (uc && ktop) {
+					proc_set_state(cpid, PROC_RUNNING);
+					proc_activate_user(cpid);
+					proc_enter_uspace(cpid, uc, ktop);
+				}
+			} else {
+				*return_pc += 4;
+			}
 		}
 		break;
 	case 12:
@@ -136,14 +159,27 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 	case 15:
 		stats_inc_page_fault();
 		pid = proc_current_pid();
-		if (epc_in_user(epc) && pid > 0 &&
+		if (trap_from_user() && pid > 0 &&
 		    vm_fault_handle(pid, (uint64_t)r_stval(), cause_code) == 0) {
 			*return_pc = epc;
 			break;
 		}
+		if (trap_from_user() && pid > 0) {
+			snprintf(d, sizeof(d),
+				 "\"pid\":%d,\"sepc\":\"0x%lx\",\"stval\":\"0x%lx\",\"cause\":%ld",
+				 pid, (long)epc, (long)r_stval(), (long)cause_code);
+			LOG_PROC("fault_kill", d);
+			printf("user fault: killed pid=%d sepc=0x%lx stval=0x%lx cause=%ld\n",
+			       pid, (long)epc, (long)r_stval(), (long)cause_code);
+			*return_pc = proc_user_fault_trap(cxt);
+#ifdef CONFIG_OPENSBI
+			w_sstatus(r_sstatus() | SSTATUS_SPP);
+#endif
+			break;
+		}
 		snprintf(d, sizeof(d), "\"sepc\":\"0x%lx\",\"stval\":\"0x%lx\",\"cause\":%ld",
 			 (long)epc, (long)r_stval(), (long)cause_code);
-		osviz_event("irq", "page_fault", d);
+		LOG_IRQ("page_fault", d);
 		printf("page fault pid=%d current=%d sepc=0x%lx stval=0x%lx cause=%ld (unhandled)\n",
 		       pid, proc_current_pid(), (long)epc, (long)r_stval(), (long)cause_code);
 		trap_diag_print_fault_frame(epc, cxt);
@@ -152,7 +188,7 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 		break;
 	default:
 		snprintf(d, sizeof(d), "\"code\":%ld", (long)cause_code);
-		osviz_event("irq", "sync_exception", d);
+		LOG_IRQ("sync_exception", d);
 		printf("Sync exception code = %ld at 0x%lx\n",
 		       (long)cause_code, (long)epc);
 		trap_diag_print_fault_frame(epc, cxt);
@@ -233,7 +269,7 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 		snprintf(d, sizeof(d),
 			 "\"depth\":%d,\"epc\":\"0x%lx\",\"cause\":\"0x%lx\"",
 			 kernel_trap_depth, (long)epc, (long)cause);
-		osviz_event("trap", "enter_nested", d);
+		LOG_TRAP("enter_nested", d);
 	}
 
 	trap_diag_trap_enter(epc, cause, cxt);
@@ -284,13 +320,8 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 	 * page table active (after_uspace and proc_user_exit_trap both switch to
 	 * it). sret back to user needs the current process user mappings.
 	 */
-	if (trap_return_to_user) {
-		int pid = proc_current_pid();
-		pagetable_t pt = pid > 0 ? proc_pagetable(pid) : NULL;
-
-		if (pt)
-			vm_activate(pt);
-	}
+	if (trap_return_to_user)
+		proc_activate_user(proc_current_pid());
 
 	/* sscratch: 0 in kernel until entry.S sets kstack top right before sret to user. */
 	trap_scratch_init(0);

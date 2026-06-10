@@ -241,6 +241,7 @@ int script_run_bg(const char *path)
 
 	bg_job.active = 1;
 	bg_job.pid = pid;
+	shell_env_fork();
 	proc_set_state(pid, PROC_RUNNING);
 	return pid;
 }
@@ -272,6 +273,7 @@ void script_bg_poll(void)
 		}
 		if (step == SCRIPT_STEP_DONE) {
 			proc_set_state(bg_job.pid, PROC_UNUSED);
+			shell_env_reap_bg();
 			bg_job.active = 0;
 			bg_job.pid = -1;
 			return;

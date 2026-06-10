@@ -1,12 +1,23 @@
 #include "os.h"
 #include "shell_env.h"
+#include "proc_user.h"
 #include "platform.h"
 #include "sbi.h"
 
-static struct {
+typedef struct {
 	char name[SHELL_ENV_NAME_LEN];
 	char val[SHELL_ENV_VAL_LEN];
-} shell_env[SHELL_ENV_MAX];
+} shell_env_entry_t;
+
+static shell_env_entry_t shell_env[SHELL_ENV_MAX];
+static shell_env_entry_t bg_env[SHELL_ENV_MAX];
+
+static shell_env_entry_t *active_env(void)
+{
+	if (proc_current_pid() != PROC_SHELL_PID)
+		return bg_env;
+	return shell_env;
+}
 
 static int str_eq_name(const char *a, const char *b)
 {
@@ -40,6 +51,7 @@ int shell_env_set(const char *name, const char *val)
 {
 	int i, n;
 	const char *v = val ? val : "";
+	shell_env_entry_t *env = active_env();
 
 	if (!name || !name[0])
 		return -1;
@@ -48,22 +60,22 @@ int shell_env_set(const char *name, const char *val)
 	if (!env_name_ok(name, n))
 		return -1;
 	for (i = 0; i < SHELL_ENV_MAX; i++) {
-		if (shell_env[i].name[0] && !str_eq_name(shell_env[i].name, name))
+		if (env[i].name[0] && !str_eq_name(env[i].name, name))
 			continue;
 		{
 			int j = 0;
 
 			while (name[j] && j < SHELL_ENV_NAME_LEN - 1) {
-				shell_env[i].name[j] = name[j];
+				env[i].name[j] = name[j];
 				j++;
 			}
-			shell_env[i].name[j] = '\0';
+			env[i].name[j] = '\0';
 			j = 0;
 			while (v[j] && j < SHELL_ENV_VAL_LEN - 1) {
-				shell_env[i].val[j] = v[j];
+				env[i].val[j] = v[j];
 				j++;
 			}
-			shell_env[i].val[j] = '\0';
+			env[i].val[j] = '\0';
 		}
 		return 0;
 	}
@@ -73,14 +85,31 @@ int shell_env_set(const char *name, const char *val)
 const char *shell_env_get(const char *name)
 {
 	int i;
+	shell_env_entry_t *env = active_env();
 
 	if (!name || !name[0])
 		return NULL;
 	for (i = 0; i < SHELL_ENV_MAX; i++) {
-		if (shell_env[i].name[0] && str_eq_name(shell_env[i].name, name))
-			return shell_env[i].val;
+		if (env[i].name[0] && str_eq_name(env[i].name, name))
+			return env[i].val;
 	}
 	return NULL;
+}
+
+void shell_env_fork(void)
+{
+	int i;
+
+	for (i = 0; i < SHELL_ENV_MAX; i++)
+		bg_env[i] = shell_env[i];
+}
+
+void shell_env_reap_bg(void)
+{
+	int i;
+
+	for (i = 0; i < SHELL_ENV_MAX; i++)
+		bg_env[i].name[0] = '\0';
 }
 
 int shell_env_set_line(const char *line)

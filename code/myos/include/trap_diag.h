@@ -4,11 +4,15 @@
 #include "types.h"
 #include "config.h"
 
+#ifndef DEBUG
+#define DEBUG CONFIG_LOG
+#endif
+
 struct context;
 
-/* Quiet when CONFIG_LOG=0 (make DEBUG=0). Panic CSR dump stays on. */
+/* Quiet when DEBUG=0 (make DEBUG=0). Panic CSR dump stays on. */
 #ifndef TRAP_DIAG_VERBOSE
-#define TRAP_DIAG_VERBOSE CONFIG_LOG
+#define TRAP_DIAG_VERBOSE (DEBUG == 1)
 #endif
 
 extern unsigned long trap_diag_user_exit_count;

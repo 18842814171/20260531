@@ -26,7 +26,7 @@ void trap_diag_trap_vector_entry(reg_t sepc, reg_t gp)
 		 "\"sepc\":\"0x%lx\",\"gp\":\"0x%lx\",\"kernel_gp\":\"0x%lx\",\"depth\":%d",
 		 (unsigned long)sepc, (unsigned long)gp,
 		 (unsigned long)kernel_gp_value, kernel_trap_depth);
-	osviz_event("trap-diag", "vector_entry", d);
+	LOG_TRAP_DIAG("vector_entry", d);
 }
 #endif
 
@@ -74,10 +74,10 @@ void trap_diag_print_csrs(const char *tag)
 		 (unsigned long)r_scause(), (unsigned long)r_stval(),
 		 (unsigned long)r_sepc(), (unsigned long)r_sstatus(),
 		 (unsigned long)r_sscratch());
-	osviz_event("trap-diag", "csr", d);
+	LOG_TRAP_DIAG("csr", d);
 #else
 	(void)tag;
-	osviz_event("trap-diag", "csr", "\"note\":\"CONFIG_OPENSBI only\"");
+	LOG_TRAP_DIAG("csr", "\"note\":\"CONFIG_OPENSBI only\"");
 #endif
 }
 
@@ -112,9 +112,9 @@ void trap_diag_print_fault_frame(reg_t fault_epc, struct context *cxt)
 		 (unsigned long)cxt->ra, (unsigned long)cxt->sp,
 		 (unsigned long)cxt->gp, (unsigned long)cxt->pc,
 		 (unsigned long)cxt->t6);
-	osviz_event("trap-diag", "fault_frame", d);
+	LOG_TRAP_DIAG("fault_frame", d);
 	if (cxt->ra == fault_epc)
-		osviz_event("trap-diag", "hint", "\"ra_eq_fault_epc\":true");
+		LOG_TRAP_DIAG("hint", "\"ra_eq_fault_epc\":true");
 }
 
 static int epc_in_kernel_text(reg_t epc)
@@ -134,14 +134,14 @@ void trap_diag_trap_pre(reg_t epc, reg_t sscratch)
 		 "\"phase\":\"pre_swap\"",
 		 proc_current_pid(), mode, (unsigned long)epc,
 		 (unsigned long)sscratch);
-	osviz_event("trap", "enter", d);
+	LOG_TRAP("enter", d);
 
 	if (epc_in_kernel_text(epc) && sscratch != 0) {
 		snprintf(d, sizeof(d),
 			 "\"epc\":\"0x%lx\",\"sscratch\":\"0x%lx\",\"pid\":%d",
 			 (unsigned long)epc, (unsigned long)sscratch,
 			 proc_current_pid());
-		osviz_event("trap", "invariant_fail", d);
+		LOG_TRAP("invariant_fail", d);
 		trap_diag_print_csrs("invariant-kernel-sscratch");
 		panic("kernel trap with sscratch != 0");
 	}
@@ -170,7 +170,7 @@ void trap_diag_trap_enter(reg_t epc, reg_t cause, struct context *cxt)
 		 proc_current_pid(), mode, (unsigned long)epc,
 		 (unsigned long)sscratch_now, frame_name(cxt), kind,
 		 (long)(cause & CAUSE_MASK_ECODE));
-	osviz_event("trap", "enter", d);
+	LOG_TRAP("enter", d);
 }
 
 void trap_diag_post_handler(reg_t ret_epc)
@@ -187,7 +187,7 @@ void trap_diag_post_handler(reg_t ret_epc)
 		 "\"ret_sepc\":\"0x%lx\",\"sscratch\":\"0x%lx\",\"sstatus\":\"0x%lx\"",
 		 (unsigned long)ret_epc, (unsigned long)r_sscratch(),
 		 (unsigned long)r_sstatus());
-	osviz_event("trap-diag", "leave_handler", d);
+	LOG_TRAP_DIAG("leave_handler", d);
 }
 
 void trap_diag_trap_return(reg_t sepc, struct context *frame)
@@ -205,7 +205,7 @@ void trap_diag_trap_return(reg_t sepc, struct context *frame)
 		 "\"sepc\":\"0x%lx\",\"restore_frame\":\"%s\",\"sscratch\":\"0x%lx\"",
 		 (unsigned long)sepc, frame_name(frame),
 		 (unsigned long)r_sscratch());
-	osviz_event("trap-diag", "return", d);
+	LOG_TRAP_DIAG("return", d);
 }
 
 void trap_diag_user_exit_branch(void)

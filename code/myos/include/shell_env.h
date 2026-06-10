@@ -9,6 +9,8 @@ int  shell_env_set(const char *name, const char *val);
 const char *shell_env_get(const char *name);
 int  shell_env_set_line(const char *line);
 void shell_env_expand(const char *in, char *out, int outcap);
+void shell_env_fork(void);
+void shell_env_reap_bg(void);
 void shell_sleep_sec(int sec);
 
 #endif /* __SHELL_ENV_H__ */

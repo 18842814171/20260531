@@ -2,6 +2,10 @@
 .section .rodata.home_embed,"a",@progbits
 .align 1
 
+.globl home_bin_exec_hi
+home_bin_exec_hi:
+    .incbin "../home/root/exec_hi"
+
 .globl home_bin_file_rw
 home_bin_file_rw:
     .incbin "../home/root/file_rw"
@@ -21,3 +25,7 @@ home_bin_pagefault:
 .globl home_bin_return0
 home_bin_return0:
     .incbin "../home/root/return0"
+
+.globl home_bin_segfault_null
+home_bin_segfault_null:
+    .incbin "../home/root/segfault_null"

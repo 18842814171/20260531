@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LibertyOS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="css/global.css">
+</head>
+<body>
+  <div class="splash">
+    <div class="splash__content">
+      <h1 class="splash__title">LIBERTY<span>OS</span></h1>
+      <div class="splash__divider"></div>
+      <div class="splash__motto">
+        <p>faith</p>
+        <p>humanity</p>
+        <p>justice</p>
+      </div>
+      <p class="splash__tagline">Built for those who still believe</p>
+
+      <div class="splash__login">
+        <div class="splash__login-card">
+          <div class="splash__login-title">
+            <i class="bi bi-shield-lock" aria-hidden="true"></i>
+            <span>login session</span>
+          </div>
+          <p class="splash__login-static">Username: root</p>
+          <form class="splash__login-form" id="login-form" autocomplete="off">
+            <div class="splash__login-row">
+              <span class="splash__login-label">login:</span>
+              <input class="splash__login-input" id="login-user" type="text"
+                     name="username" spellcheck="false" autocapitalize="off"
+                     autocomplete="username" required>
+            </div>
+            <p class="splash__login-error hidden" id="login-error">Login incorrect. Try again.</p>
+            <button class="btn btn--primary splash__login-submit" type="submit">
+              <i class="bi bi-box-arrow-in-right" aria-hidden="true"></i> 进入系统
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/global.js"></script>
+  <script src="js/index.js"></script>
+</body>
+</html>

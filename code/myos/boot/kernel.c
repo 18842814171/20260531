@@ -43,30 +43,30 @@ static void osviz_log_boot_progress(void)
 	ptr_t bss_bytes = BSS_END - BSS_START;
 
 #ifdef CONFIG_OPENSBI
-	osviz_event("boot", "entry",
-		    "\"load\":\"0x80200000\",\"mode\":\"S\",\"firmware\":\"OpenSBI\"");
+	LOG_BOOT("entry",
+		 "\"load\":\"0x80200000\",\"mode\":\"S\",\"firmware\":\"OpenSBI\"");
 	snprintf(buf, sizeof(buf),
 		 "\"hart\":%d,\"dtb\":\"0x%lx\"",
 		 (int)boot_hartid, (unsigned long)boot_dtb);
-	osviz_event("boot", "opensbi_handoff", buf);
+	LOG_BOOT("opensbi_handoff", buf);
 #else
-	osviz_event("boot", "entry", "\"pc\":\"0x80000000\",\"mode\":\"M\"");
+	LOG_BOOT("entry", "\"pc\":\"0x80000000\",\"mode\":\"M\"");
 #endif
 
 	snprintf(buf, sizeof(buf),
 		 "\"bss_start\":\"0x%lx\",\"bss_end\":\"0x%lx\",\"bss_bytes\":%d",
 		 (unsigned long)BSS_START, (unsigned long)BSS_END, (int)bss_bytes);
-	osviz_event("boot", "bss_done", buf);
-	osviz_event("boot", "stack_ready", "\"sp_ready\":true");
+	LOG_BOOT("bss_done", buf);
+	LOG_BOOT("stack_ready", "\"sp_ready\":true");
 
 #ifdef CONFIG_OPENSBI
-	osviz_event("boot", "priv_config",
-		    "\"mode\":\"S\",\"note\":\"OpenSBI completed M→S\"");
+	LOG_BOOT("priv_config",
+		 "\"mode\":\"S\",\"note\":\"OpenSBI completed M→S\"");
 #elif defined(CONFIG_SYSCALL)
-	osviz_event("boot", "priv_config",
-		    "\"mpp\":\"U\",\"note\":\"PMP for user tasks\"");
+	LOG_BOOT("priv_config",
+		 "\"mpp\":\"U\",\"note\":\"PMP for user tasks\"");
 #else
-	osviz_event("boot", "priv_config", "\"mpp\":\"M\",\"mpie\":true");
+	LOG_BOOT("priv_config", "\"mpp\":\"M\",\"mpie\":true");
 #endif
 }
 
@@ -79,38 +79,38 @@ void start_kernel(void)
 	uart_init();
 	trap_init();
 
-	osviz_init();
-	osviz_boot_banner();
+	LOG_INIT();
+	LOG_BOOT_BANNER();
 	osviz_log_boot_progress();
 
-	osviz_event("boot", "uart_init", NULL);
+	LOG_BOOT("uart_init", NULL);
 
 	fs_init();
 	proc_init();
 	proc_user_init();
 
 	pmm_init();
-	osviz_event("boot", "pmm_init", NULL);
+	LOG_BOOT("pmm_init", NULL);
 	vm_init();
-	osviz_event("boot", "vm_init", "\"mode\":\"Sv39\"");
+	LOG_BOOT("vm_init", "\"mode\":\"Sv39\"");
 
 	snprintf(tbuf, sizeof(tbuf), "\"tvec\":\"0x%lx\"", (unsigned long)trap_vec_read());
-	osviz_event("boot", "trap_init", tbuf);
+	LOG_BOOT("trap_init", tbuf);
 
 	plic_init();
-	osviz_event("boot", "plic_init", NULL);
+	LOG_BOOT("plic_init", NULL);
 	uart_irq_enable();
 
 	timer_init();
-	osviz_event("boot", "timer_init", "\"hz\":100");
+	LOG_BOOT("timer_init", "\"hz\":100");
 
 	sched_init();
-	osviz_event("boot", "sched_init", NULL);
+	LOG_BOOT("sched_init", NULL);
 
 	os_main();
-	osviz_event("boot", "os_main_done", "\"console\":true");
+	LOG_BOOT("os_main_done", "\"console\":true");
 
-	osviz_event("boot", "kernel_ready", "\"status\":\"ok\"");
+	LOG_BOOT("kernel_ready", "\"status\":\"ok\"");
 
 	cpu_irq_enable();
 
