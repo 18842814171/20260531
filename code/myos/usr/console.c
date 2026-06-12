@@ -178,6 +178,9 @@ static void cmd_ps(int verbose)
 		case PROC_READY:
 			st = 'S';
 			break;
+		case PROC_BLOCKED:
+			st = 'D';
+			break;
 		case PROC_ZOMBIE:
 			st = 'Z';
 			break;
@@ -417,7 +420,7 @@ static void print_help(void)
 {
 	uart_puts("Shell commands (Linux-style):\n");
 	uart_puts("  cd [dir]        pwd             ls [dir]\n");
-	uart_puts("  cat <file>      touch <file>      vi <file>\n");
+	uart_puts("  cat <file>      touch <file>      vi <file> (i/Esc/:wq)\n");
 	uart_puts("  echo ...        echo ... > f      echo ... >> f\n");
 	uart_puts("  export k=v      k=v               . script.sh [&]\n");
 	uart_puts("  ./program [&]   sh script.sh [&]\n");

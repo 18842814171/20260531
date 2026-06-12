@@ -35,6 +35,8 @@ void osviz_boot_banner(void);
 #define LOG_TRAP_DIAG(ev, data) LOG_EVENT("trap-diag", (ev), (data))
 #define LOG_PMM(ev, data)       LOG_EVENT("pmm", (ev), (data))
 #define LOG_PROC(ev, data)      LOG_EVENT("proc", (ev), (data))
+#define LOG_SCHED(ev, data)     LOG_EVENT("sched", (ev), (data))
+#define LOG_SEM(ev, data)       LOG_EVENT("sem", (ev), (data))
 #define LOG_IRQ(ev, data)       LOG_EVENT("irq", (ev), (data))
 
 #define LOGIF(cond, mod, ev, data) \
@@ -52,6 +54,8 @@ void osviz_boot_banner(void);
 #define LOG_TRAP_DIAG(ev, data)  ((void)0)
 #define LOG_PMM(ev, data)        ((void)0)
 #define LOG_PROC(ev, data)       ((void)0)
+#define LOG_SCHED(ev, data)      ((void)0)
+#define LOG_SEM(ev, data)        ((void)0)
 #define LOG_IRQ(ev, data)        ((void)0)
 
 #define LOGIF(cond, mod, ev, data) ((void)0)

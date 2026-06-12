@@ -8,14 +8,16 @@
 #include <stddef.h>
 #include <stdarg.h>
 
-/* uart (Phase 1: MMIO poll-only; see boot/uart.c) */
+/* uart (Phase 2: IRQ + ring buffer; see boot/uart.c) */
 extern int uart_putc(char ch);
 extern void uart_puts(char *s);
 extern void uart_rx_flush(void);
 extern void uart_rx_flush_deep(void);
 extern void uart_rx_drain_quiet(unsigned quiet_need, unsigned max_spin);
 extern void uart_irq_enable(void);
+extern void uart_irq_handler(void);
 extern int uart_try_getc(void);
+extern int uart_readc_wait(void);
 extern int uart_getc(void);
 extern int uart_read_line(char *buf, int maxlen);
 extern int uart_prompt_and_read_line(const char *prompt, char *buf, int maxlen);

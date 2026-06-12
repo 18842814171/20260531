@@ -35,22 +35,30 @@ fi
 
 # Interactive: direct QEMU on the terminal (keyboard + Ctrl+C work).
 # Non-interactive (CI/scripts): pipe stdout into osviz capture.
-if [[ -t 0 ]]; then
+# Note: shell DEBUG here is NOT the same as "make DEBUG=1" (kernel LOG_*).
+if [[ -t 0 && -t 1 ]]; then
+	QEMU_INTERACTIVE=1
 	DEBUG="${DEBUG:-n}"
 else
+	QEMU_INTERACTIVE=0
 	DEBUG="${DEBUG:-y}"
 fi
 
 run_qemu() {
 	echo "myos QEMU"
 	echo "  kernel: ${KERNEL}"
+	echo "  kernel logging: make DEBUG=1 (sched/sem/proc) | make DEBUG=0 (quiet)"
 	if [[ "${DEBUG}" != "n" && -f "${SERIAL_READER}" ]]; then
 		echo "  osviz:  ${LOG_ROOT}/events/ (capture only, not for typing)"
 	fi
 	echo "  quit:   Ctrl+C"
 	echo "          poweroff at login: or myos>"
-	if [[ "${DEBUG}" == "n" ]]; then
-		echo "  mode:   interactive (-serial stdio)"
+	if [[ "${QEMU_INTERACTIVE}" == 1 ]]; then
+		echo "  mode:   interactive (-serial stdio, DEBUG=n)"
+		if [[ "${DEBUG}" != "n" ]]; then
+			echo "  warning: DEBUG=y pipes QEMU stdout — keyboard will NOT reach guest"
+			echo "           use: DEBUG=n ./sh/start_qemu.sh"
+		fi
 	fi
 	echo "------------------------------------"
 	if [[ -t 0 ]]; then

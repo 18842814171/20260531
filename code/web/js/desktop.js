@@ -54,9 +54,6 @@
     listEl: $('#log-bubble-list'),
     emptyEl: $('#log-bubble-empty'),
     badgeEl: $('#log-count-badge'),
-    pageInfoEl: $('#log-page-info'),
-    prevBtn: $('#log-prev'),
-    nextBtn: $('#log-next'),
   });
 
   LibertyTerminal.init({

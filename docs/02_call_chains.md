@@ -1,6 +1,6 @@
 # myos — Key Call Chains
 
-Index of important control-flow paths. Indentation shows call order. File names are under `code/myos/` unless noted.
+**Scope:** Important control-flow paths in `code/myos/`. Indentation shows call order.
 
 ---
 
@@ -11,52 +11,34 @@ _start                          boot/start.S
  └─ start_kernel                boot/kernel.c
      ├─ uart_init               boot/uart.c
      ├─ trap_init               interrupt/trap.c
-     │   └─ w_stvec(trap_vector)
-     ├─ LOG_INIT / LOG_BOOT_BANNER / osviz_log_boot_progress
      ├─ fs_init                 fs/fs.c
-     │   └─ fs_load_home        (embedded nodes from home_data.c)
-     ├─ proc_init               proc/proc.c
-     ├─ proc_user_init          proc/proc_user.c
-     ├─ pmm_init                mem/pmm.c
-     ├─ vm_init                 mem/vm.c
-     ├─ plic_init               interrupt/plic.c
-     ├─ uart_irq_enable         boot/uart.c
+     ├─ proc_init / proc_user_init / sem_init
+     ├─ pmm_init / vm_init
+     ├─ plic_init
+     ├─ uart_irq_enable         boot/uart.c  (PLIC + IER RX)
      ├─ timer_init              interrupt/timer.c
      ├─ sched_init              proc/sched.c
-     ├─ os_main                 usr/user.c
-     ├─ cpu_irq_enable
      └─ console_run             usr/console.c
-         └─ login_session
-             └─ uart_read_line → uart_getc
-         └─ shell_loop
-             └─ uart_prompt_and_read_line
+         └─ login_session → shell_loop
 ```
 
 ---
 
-## 2. Trap dispatch (all exceptions and interrupts)
+## 2. Trap dispatch (exceptions and interrupts)
 
 ```text
 (hardware) supervisor trap
  └─ trap_vector                  interrupt/entry.S
-     ├─ [optional] trap_diag_trap_pre
-     ├─ [busy] trap_nested_timer_ack → timer_handler → TRAP_RET
      ├─ reg_save (kernel_trap_cxt or per-proc user_ctx)
      ├─ trap_handler               interrupt/trap.c
-     │   ├─ reload kernel gp
-     │   ├─ if interrupt:
-     │   │   ├─ TRAP_IRQ_TIMER → timer_handler
-     │   │   ├─ TRAP_IRQ_SOFT  → (schedule disabled)
-     │   │   └─ TRAP_IRQ_EXTERNAL → external_interrupt_handler
-     │   │         └─ plic_claim → uart_rx_flush (UART IRQ not used for stdin)
-     │   └─ if sync exception:
-     │       └─ handle_sync_exception
-     │   ├─ proc_activate_user(pid)  if trap_return_to_user
-     │   └─ trap_scratch_init(0)
-     ├─ csrw sepc, return_pc (a0 from trap_handler)
-     ├─ reg_restore
-     ├─ trap_reenable_irq path (SIE only if returning to user)
-     ├─ trap_return_to_user: csrw sscratch, kstack_top
+     │   ├─ TRAP_IRQ_TIMER → timer_handler
+     │   ├─ TRAP_IRQ_SOFT  → (preemptive schedule disabled)
+     │   └─ TRAP_IRQ_EXTERNAL → external_interrupt_handler
+     │         ├─ plic_claim
+     │         ├─ if irq == UART0_IRQ → uart_irq_handler
+     │         └─ plic_complete
+     │   └─ sync → handle_sync_exception
+     ├─ proc_activate_user(pid)  if trap_return_to_user
      └─ sret
 ```
 
@@ -65,17 +47,15 @@ _start                          boot/start.S
 ## 3. User environment call (generic syscall)
 
 ```text
-user: ecall                     (a7 = syscall number, a0–a2 = args)
- └─ trap_vector                  interrupt/entry.S
-     └─ user path: reg_save to proc user_ctx (early save)
- └─ trap_handler
+user: ecall                     (a7 = syscall number)
+ └─ trap_vector → trap_handler
      └─ handle_sync_exception (cause 8 or 9)
          ├─ if a7 == SYS_exit → [see §4]
+         ├─ if a7 == SYS_yield → proc_user_yield_trap
          └─ else:
              ├─ do_syscall           proc/syscall.c
-             │   └─ switch(a7): sys_open, sys_read, …
              └─ return_pc = epc + 4
- └─ reg_restore → sret to user (sepc advanced)
+ └─ reg_restore → sret
 ```
 
 ---
@@ -84,20 +64,11 @@ user: ecall                     (a7 = syscall number, a0–a2 = args)
 
 ```text
 user: SYS_exit (93), status in a0
- └─ trap_handler → handle_sync_exception
-     ├─ proc_user_exit(pid, status)     proc/proc_user.c
-     │   └─ proc_mark_zombie
+ └─ proc_user_exit_trap
+     ├─ proc_user_exit → proc_mark_zombie → proc_sched_child_exit
      ├─ proc_prepare_kernel_return(cxt, pid)
-     ├─ return_pc = proc_run_saved_cont(pid)
-     │            or proc_run_saved_ra(pid)
-     ├─ w_sstatus | SPP                  (return in S-mode)
      └─ sret → after_uspace in proc_user_run
-         ├─ vm_activate(vm_kernel_pt())
-         ├─ trap_scratch_init(0)
-         ├─ current_pid = PROC_SHELL_PID
-         └─ return 0
-             └─ proc_spawn_exec_wait
-                 └─ proc_wait → reap zombie → shell prompt
+         └─ proc_wait / proc_spawn_exec_wait → shell prompt
 ```
 
 ---
@@ -107,138 +78,112 @@ user: SYS_exit (93), status in a0
 ```text
 shell_loop                      usr/console.c
  └─ proc_spawn_exec_wait(path)  proc/proc_user.c
-     ├─ proc_alloc(name, PROC_SHELL_PID)
-     ├─ proc_load_elf(child, path)
-     │   ├─ fs_read_file(path, file_buf)
-     │   ├─ vm_create + proc_set_pagetable
-     │   ├─ foreach PT_LOAD: vm_map_user_page
-     │   ├─ vm_map_user_zero (initial stack pages)
-     │   └─ uctx: pc = e_entry, sp = USER_STACK_TOP
+     ├─ proc_alloc / proc_load_elf
      ├─ proc_user_run(child)
-     │   ├─ proc_save_run_caller / proc_save_run_cont(&&after_uspace)
-     │   ├─ vm_activate(child pagetable)
-     │   └─ proc_enter_uspace → enter_uspace      interrupt/entry.S
-     │       ├─ csrw sscratch, kstack_top
-     │       ├─ reg_restore(user_ctx)
-     │       ├─ csrc SPP; set SPIE; clear SIE
-     │       └─ sret → user _start (usr/crt0.S)
-     │             └─ main → write(1,…) → SYS_write → uart_putc
-     │             └─ ecall SYS_exit
-     ├─ after_uspace: (see §4 tail)
+     │   └─ proc_enter_uspace → enter_uspace → user main
      └─ proc_wait(PROC_SHELL_PID, child)
 ```
 
 ---
 
-## 6. Syscall: `open` → ramfs
+## 6. Syscall: `read` (stdin, IRQ path)
 
 ```text
-user: SYS_open (1024)
- └─ do_syscall
-     └─ sys_open
-         ├─ copyinstr(kpath, path)      proc/copy_user.c
-         └─ fs_open(path, flags)        fs/fs.c
+user: SYS_read (63), fd=0
+ └─ sys_read → uart_readc_wait     boot/uart.c
+     ├─ uart_try_getc → uart_ring_get
+     └─ if empty: proc_block(&uart_read_wq)
+           └─ proc_sched_run_ready → proc_user_run_dispatch
 ```
 
 ---
 
-## 7. Syscall: `read` / `write`
-
-```text
-user: SYS_write (64)
- └─ do_syscall
-     └─ sys_write
-         ├─ fd 1/2: copy_from_user + uart_putc loop
-         └─ else: fs_write + copy_*_user
-```
-
----
-
-## 8. Syscall: `fork` / `waitpid`
+## 7. Syscall: `fork` / `waitpid`
 
 ```text
 user: SYS_fork (214)
- └─ sys_fork
-     ├─ proc_fork(parent)
-     │   ├─ child uctx: a0 = 0, pc advanced past ecall
-     │   └─ addrspace_clone → vm_fork_copy
-     └─ parent cxt->a0 = child_pid
+ └─ sys_fork → proc_fork → vm_fork_copy + child pc += 4
 
 user: SYS_waitpid (260)
  └─ sys_waitpid → proc_wait
-     ├─ may proc_user_run(child) while waiting
-     └─ trap_return_to_user → proc_activate_user(parent) before sret
+     ├─ proc_sched_run_ready()     run ready children
+     └─ proc_block(child_wait_chan) parent waits for zombie
 ```
 
 ---
 
-## 9. Page fault (demand stack)
+## 8. Block, wakeup, and resume
+
+```text
+proc_block(chan)                proc/proc_sched.c
+ ├─ wq_enqueue; PROC_BLOCKED
+ └─ while BLOCKED:
+     ├─ proc_sched_run_ready()
+     │   └─ proc_user_run_dispatch(next)
+     │         ├─ depth==0 → proc_user_run(next)
+     │         └─ depth>0, READY → proc_user_run_resume(next)
+     └─ cpu_irq_enable(); wfi(); cpu_irq_disable()
+
+proc_wakeup(chan)
+ └─ wq_dequeue → PROC_READY
+
+UART IRQ path:
+ external_interrupt_handler
+   └─ uart_irq_handler
+         ├─ uart_ring_put
+         └─ proc_wakeup(&uart_read_wq)
+```
+
+---
+
+## 9. IPC demo (`./ipc_echo`)
+
+```text
+main                            home/root/ipc_echo.c
+ ├─ ipc_shm_map()                SYS_ipc_shm_map → mem/ipc_shm.c
+ ├─ sem_create × 3               proc/sem.c
+ ├─ fork → producer_loop
+ │     └─ read(0) → ipc_put → sem_wait/post
+ ├─ fork → consumer_loop
+ │     └─ ipc_get → write(1, echo)
+ └─ waitpid × 2
+```
+
+---
+
+## 10. Page fault (demand stack)
 
 ```text
 user load/store to unmapped user page
- └─ trap_handler → handle_sync_exception (cause 12/13/15)
-     └─ vm_fault_handle(pid, stval, cause)   mem/vm.c
-         └─ vm_map_user_zero (anonymous stack/heap growth)
-     └─ return_pc = epc (retry instruction)
+ └─ trap_handler → vm_fault_handle   mem/vm.c
+     └─ vm_map_user_zero → return_pc = epc (retry)
  └─ sret
 ```
 
 ---
 
-## 10. Kernel structured log (osviz)
+## 11. Kernel structured log (osviz)
 
 ```text
-LOG_TRAP("enter", d)            interrupt/trap_diag.c  (macro)
- └─ osviz_event(module, event, json_data)   boot/osviz_k.c  [DEBUG=1 only]
-     └─ printf("LOG {\"ts_ms\":…,\"module\":…,\"event\":…,\"hart\":…}\n")
-         └─ UART → QEMU serial
+LOG_SCHED("run", d)             proc/proc_sched.c
+ └─ osviz_event → printf("LOG {...}\n") → UART
 ```
 
-**Snapshot**
-
-```text
-shell: snapshot / LOG_SNAPSHOT()     usr/console.c
- └─ osviz_snapshot()                  boot/osviz_k.c
-     └─ printf("LOG_SNAPSHOT {…}\n")
-```
-
-**User API**
-
-```text
-SYS_osviz_event / SYS_osviz_snap
- └─ do_syscall → LOG_EVENT / LOG_SNAPSHOT (macros)
-```
+See [04_logging_and_osviz.md](04_logging_and_osviz.md).
 
 ---
 
-## 11. Web: serial → browser
+## 12. Web: serial → browser
 
 ```text
 QEMU -serial stdio
- └─ PTY master (server.py shell_reader)
-     └─ SerialDemux.feed(chunk)
-         ├─ line starts with "LOG "       → ws {type:"event", event:{…}}
-         ├─ line starts with "LOG_SNAPSHOT " → ws {type:"snapshot", …}
-         └─ else                          → ws {type:"output", data:line}
- └─ browser terminal.js
-     ├─ output  → #console-output (after Welcome gate)
-     └─ event   → LibertyLogs.addEvent (right panel)
+ └─ PTY (server.py) → SerialDemux → WebSocket
+     ├─ LOG {...}     → type=event
+     ├─ LOG_SNAPSHOT  → type=snapshot
+     └─ else          → type=output
 ```
 
-Path: `code/web/server.py`, `code/web/js/terminal.js`, `code/web/js/logs.js`. See [05_web_frontend.md](05_web_frontend.md).
-
----
-
-## 12. Host capture (optional, CLI)
-
-```text
-./sh/start_qemu.sh   (DEBUG=y, non-TTY)
- └─ qemu … | python3 code/osviz/bridge/serial_reader.py
-     ├─ stdout: full serial (for human)
-     └─ events/events.jsonl: LOG lines only
-```
-
-Web path sets `DEBUG=n` in `server.py` and does **not** pipe through `serial_reader.py`; demux is in Flask instead.
+See [05_web_frontend.md](05_web_frontend.md).
 
 ---
 
@@ -248,13 +193,16 @@ Web path sets `DEBUG=n` in `server.py` and does **not** pipe through `serial_rea
 |--------|------|---------|
 | 63 | SYS_read | `sys_read` |
 | 64 | SYS_write | `sys_write` |
-| 93 | SYS_exit | zombie + kernel return (not `do_syscall` retval) |
+| 93 | SYS_exit | `proc_user_exit_trap` (not `do_syscall` retval) |
 | 172 | SYS_getpid | `proc_current_pid` |
 | 214 | SYS_fork | `sys_fork` |
 | 221 | SYS_execve | `proc_load_elf` + `proc_user_run` |
+| 247 | SYS_yield | `proc_user_yield_trap` |
 | 260 | SYS_waitpid | `proc_wait` |
 | 1024 | SYS_open | `sys_open` → `fs_open` |
 | 1025 | SYS_close | `sys_close` |
+| 2001–2004 | SYS_sem_* | `sem_create/wait/post/getval` |
+| 2005 | SYS_ipc_shm_map | `ipc_shm_map` |
 | 1000 | SYS_osviz_event | `LOG_EVENT` |
 | 1001 | SYS_osviz_snap | `LOG_SNAPSHOT` |
 
@@ -262,4 +210,16 @@ Definitions: `include/syscall.h`.
 
 ---
 
-*For module entry points, see [03_module_index.md](03_module_index.md). For LOG macro details, see [04_logging_and_osviz.md](04_logging_and_osviz.md).*
+## Related documents
+
+| Document | Contents |
+|----------|----------|
+| [01_architecture.md](01_architecture.md) | Diagrams and boot order |
+| [03_module_index.md](03_module_index.md) | Module entry points |
+| [04_logging_and_osviz.md](04_logging_and_osviz.md) | LOG macro details |
+| [05_web_frontend.md](05_web_frontend.md) | Web demux |
+| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | Scheduling bugs (§13) |
+
+---
+
+*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*

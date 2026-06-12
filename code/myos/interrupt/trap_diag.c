@@ -50,8 +50,17 @@ static const char *frame_name(struct context *cxt)
 	return "other";
 }
 
+static int trap_diag_is_timer_irq(reg_t cause)
+{
+	if (!(cause & CAUSE_MASK_INTERRUPT))
+		return 0;
+	return (cause & CAUSE_MASK_ECODE) == TRAP_IRQ_TIMER;
+}
+
 static int trap_diag_interesting(reg_t epc, reg_t cause, struct context *cxt)
 {
+	if (trap_diag_is_timer_irq(cause))
+		return 0;
 	if (!(cause & CAUSE_MASK_INTERRUPT))
 		return 1;
 	if (epc_in_user(epc))

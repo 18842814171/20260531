@@ -4,6 +4,7 @@
 #include "osviz_k.h"
 #include "trap_csr.h"
 #include "config.h"
+#include "sem.h"
 
 extern void uart_init(void);
 extern void pmm_init(void);
@@ -88,6 +89,7 @@ void start_kernel(void)
 	fs_init();
 	proc_init();
 	proc_user_init();
+	sem_init();
 
 	pmm_init();
 	LOG_BOOT("pmm_init", NULL);

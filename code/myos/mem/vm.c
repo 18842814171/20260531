@@ -1,5 +1,6 @@
 #include "os.h"
 #include "vm.h"
+#include "ipc_shm.h"
 #include "proc_user.h"
 #include "proc.h"
 #include "fs.h"
@@ -250,6 +251,19 @@ int vm_map_user_zero(pagetable_t pt, uint64_t va, uint64_t len, int perm)
 	return vm_map_user_page(pt, va, NULL, len, perm);
 }
 
+int vm_map_user_existing(pagetable_t pt, uint64_t va, void *page, int perm)
+{
+	uint64_t *pte;
+
+	if (!pt || !page || (va & PGMASK))
+		return -1;
+	pte = vm_walk(pt, va, 1);
+	if (!pte)
+		return -1;
+	*pte = PA2PTE((uint64_t)page) | perm | PTE_V | PTE_A | PTE_D;
+	return 0;
+}
+
 uint64_t vm_pte_at(pagetable_t pt, uint64_t va)
 {
 	uint64_t *pte = vm_walk(pt, va, 0);
@@ -377,6 +391,8 @@ static const char *proc_state_label(enum proc_state st)
 		return "R running";
 	case PROC_READY:
 		return "S sleeping";
+	case PROC_BLOCKED:
+		return "D blocked";
 	case PROC_ZOMBIE:
 		return "Z zombie";
 	default:
@@ -481,6 +497,17 @@ pagetable_t vm_fork_copy(pagetable_t parent)
 		src_pte = vm_walk(parent, va, 0);
 		if (!src_pte || !(*src_pte & PTE_V) || !(*src_pte & PTE_U))
 			continue;
+		if (va == USER_IPC_BASE) {
+			uint64_t *dst_pte = vm_walk(child, va, 1);
+
+			if (!dst_pte) {
+				vm_destroy(child);
+				return NULL;
+			}
+			*dst_pte = (*src_pte & (PTE_R | PTE_W | PTE_X | PTE_U)) |
+				PA2PTE(PTE2PA(*src_pte)) | PTE_V | PTE_A | PTE_D;
+			continue;
+		}
 		page = page_alloc(1);
 		if (!page) {
 			vm_destroy(child);

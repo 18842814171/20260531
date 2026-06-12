@@ -1,9 +1,12 @@
 #include "os.h"
 #include "fs.h"
 #include "syscall.h"
+#include "proc.h"
 #include "proc_user.h"
 #include "uaccess.h"
 #include "osviz_k.h"
+#include "sem.h"
+#include "ipc_shm.h"
 
 static int sys_open(const char *path, int flags)
 {
@@ -67,17 +70,12 @@ static int sys_read(int fd, char *buf, int len)
 		return -1;
 	if (fd == 0) {
 		while (total < len) {
-			chunk = len - total;
-			if (chunk > (int)sizeof(kbuf))
-				chunk = (int)sizeof(kbuf);
-			n = uart_read_buf(kbuf, chunk);
-			if (n <= 0)
-				break;
-			if (copy_to_user(buf + total, kbuf, n) < 0)
+			int c = uart_readc_wait();
+
+			kbuf[0] = (char)c;
+			if (copy_to_user(buf + total, kbuf, 1) < 0)
 				return -1;
-			total += n;
-			if (n < chunk)
-				break;
+			total++;
 		}
 		return total;
 	}
@@ -178,6 +176,10 @@ void do_syscall(struct context *cxt)
 	case SYS_waitpid:
 		ret = sys_waitpid(pid > 0 ? pid : PROC_SHELL_PID, (int)cxt->a0);
 		break;
+	case SYS_yield:
+		/* Handled in trap.c (kernel return, no nested proc_user_run). */
+		ret = 0;
+		break;
 	case SYS_execve:
 		if (pid <= 0) {
 			ret = ENOSYS;
@@ -204,6 +206,21 @@ void do_syscall(struct context *cxt)
 	case SYS_osviz_snap:
 		LOG_SNAPSHOT();
 		ret = 0;
+		break;
+	case SYS_sem_create:
+		ret = sem_create((int)cxt->a0);
+		break;
+	case SYS_sem_wait:
+		ret = sem_wait((int)cxt->a0);
+		break;
+	case SYS_sem_post:
+		ret = sem_post((int)cxt->a0);
+		break;
+	case SYS_sem_getval:
+		ret = sem_getval((int)cxt->a0);
+		break;
+	case SYS_ipc_shm_map:
+		ret = ipc_shm_map(pid > 0 ? pid : PROC_SHELL_PID);
 		break;
 	default:
 		printf("Unknown syscall no: %u\n", syscall_num);

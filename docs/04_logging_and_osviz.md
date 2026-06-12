@@ -1,6 +1,6 @@
 # Logging and OSViz
 
-Structured kernel events, host capture tools, and how they relate to the Web UI. Kernel code lives under `code/myos/`; host package under `code/osviz/`.
+**Scope:** Structured kernel events, host capture tools, and Web UI consumption. Kernel code under `code/myos/`; host package under `code/osviz/`.
 
 ---
 
@@ -38,7 +38,7 @@ Implementation: `code/myos/boot/osviz_k.c`
 | `LOG_INIT()` | Record boot time base (`osviz_init`) |
 | `LOG_BOOT_BANNER()` | ASCII banner + `LOG_BOOT("banner", …)` |
 | `LOG_EVENT(mod, ev, data)` | Generic event |
-| `LOG_BOOT` / `LOG_TRAP` / `LOG_TRAP_DIAG` / `LOG_PMM` / `LOG_PROC` / `LOG_IRQ` | Module shortcuts |
+| `LOG_BOOT` / `LOG_TRAP` / `LOG_TRAP_DIAG` / `LOG_PMM` / `LOG_PROC` / `LOG_SCHED` / `LOG_SEM` / `LOG_IRQ` | Module shortcuts |
 | `LOG_SNAPSHOT()` | IRQ/proc aggregate JSON |
 | `LOGIF(cond, mod, ev, data)` | Conditional event |
 
@@ -134,15 +134,15 @@ Runtime capture directory when using `serial_reader.py`. See `events/README.md`.
 
 ---
 
-## 6. Related documents
+## Related documents
 
 | Document | Contents |
 |----------|----------|
-| [01_architecture.md](01_architecture.md) | §7–§8 system diagrams |
-| [02_call_chains.md](02_call_chains.md) | §10–§12 log and Web chains |
+| [01_architecture.md](01_architecture.md) | §10 observability summary |
+| [02_call_chains.md](02_call_chains.md) | §11 log and Web chains |
 | [05_web_frontend.md](05_web_frontend.md) | SerialDemux and UI |
-| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §12 Web demux / terminal gate |
+| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §11 Web demux / terminal gate |
 
 ---
 
-*Kernel logging is compile-time gated via `DEBUG`; host file logging is optional and separate from the Web path.*
+*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*

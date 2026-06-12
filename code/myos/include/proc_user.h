@@ -27,7 +27,17 @@ void proc_activate_user(int pid);
 void proc_activate_kernel(void);
 
 int proc_load_elf(int pid, const char *path);
+/* 0 = exited, 1 = yielded, 2 = blocked (resume via waitpid loop), -1 = error */
+#define PROC_USER_RUN_YIELD    1
+#define PROC_USER_RUN_BLOCKED  2
+
 int proc_user_run(int pid);
+int proc_user_run_inflight(int pid);
+/* depth==0 fresh run, or READY after block-in-syscall resume */
+int proc_user_run_schedulable(int pid);
+int proc_user_run_dispatch(int pid);
+void proc_user_run_unwind_blocked(int pid);
+reg_t proc_user_yield_trap(struct context *cxt);
 void proc_user_exit(int pid, int status);
 
 /* Handle SYS_exit: mark zombie and return kernel continuation (never user). */

@@ -1,6 +1,6 @@
 # myos Development: Problems, Root Causes, and Resolutions
 
-This document records recurring issues encountered while bringing up **myos** on **RISC-V64** (QEMU `virt`, OpenSBI, S-mode kernel, MMIO NS16550, later **Sv39** per-process page tables). Descriptions use formal technical language. Entries are grouped by subsystem.
+**Scope:** Recurring issues on **RISC-V64** (QEMU `virt`, OpenSBI, S-mode kernel, Sv39, NS16550 + PLIC). Formal technical language; grouped by subsystem.
 
 ---
 
@@ -392,10 +392,56 @@ These items are **design guidance**, not bugs in myos per se.
 
 ---
 
-## 12. Chronological Arc (one paragraph)
+## 12. User process scheduling (`proc_sched`)
 
-Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **`proc_user_run` / `proc_wait`** required **per-process trap frames**, **kernel `gp` in the trap vector**, **`after_uspace` continuation on exit**, and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **Observability** added macro-gated **`LOG_*`** (my_sim style) and a **LibertyOS Web UI** with **server-side serial demux** separating terminal text from structured events.
+### 12.1 False early exit via `proc_user_run_unwind_blocked`
+
+**Problem.** Running `./ipc_echo` (or `AUTORUN=ipc_echo`) destroyed pid=2 page tables before `main` reached sem create; `vm_destroy` panicked on corrupt PTEs.
+
+**Root cause.** `proc_block()` called `proc_user_run_unwind_blocked()`, which **`jr`’d to `after_uspace`** without a normal trap return. User/kernel context (satp, stack, `run_saved_cont`) was inconsistent; the parent appeared to exit while still inside `waitpid`.
+
+**Resolution.** Do **not** unwind from `proc_block`. Return blocked processes through the normal **`proc_user_run` → BLOCKED → scheduler** path. See [01_architecture.md](01_architecture.md) §6.
 
 ---
 
-*Document purpose: long-term recall of symptoms, mechanisms, and fixes without tying entries to individual session notes.*
+### 12.2 READY starvation: `proc_user_run_inflight` vs blocked syscall
+
+**Problem.** After disabling unwind, `./ipc_echo` printed the input prompt but **keyboard had no effect** (no producer/consumer output, `q` did not quit). UART IRQ fired and `wakeup pid=3` appeared in logs, but no `sched run pid=3` followed.
+
+**Root cause.** Nested `proc_block` + `proc_user_run` used `if (!proc_user_run_inflight(next))` before running a woken process. A process blocked in a syscall still has **`proc_user_run_depth > 0`**, so READY pid=3 was filtered out and the CPU stayed in **`wfi`** forever.
+
+**Resolution.**
+
+- `proc_block`: call **`proc_sched_run_ready()`** + `wfi`; do not nest blind `proc_user_run`.
+- **`proc_user_run_schedulable`**: allow `depth==0` **or** `PROC_READY` after wakeup.
+- **`proc_user_run_dispatch`**: `depth==0` → fresh `proc_user_run`; `depth>0` + READY → **`proc_user_run_resume`** (re-`enter_uspace` without overwriting `run_saved_cont`).
+
+---
+
+### 12.3 Confusing DEBUG flags (kernel vs shell)
+
+**Problem.** Operator reports “keyboard dead” or “only LOG lines on keypress” while `make DEBUG=0`.
+
+**Root cause.** **`make DEBUG=0|1`** (kernel compile) and **`DEBUG=n|y`** in `start_qemu.sh` (host pipe) are independent. `DEBUG=y` pipes stdout to osviz and breaks interactive stdin; `make DEBUG=1` still floods serial with `LOG {...}`.
+
+**Resolution.** Interactive demo: **`make DEBUG=0`** and **`DEBUG=n ./sh/start_qemu.sh`**. See [README.md](README.md) operator table.
+
+---
+
+## 13. Chronological arc (summary)
+
+Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **`proc_user_run` / `proc_wait`** required **per-process trap frames**, **kernel `gp` in the trap vector**, **`after_uspace` continuation on exit**, and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **UART RX IRQ + ring** and **`proc_sched` block/wakeup** enabled blocking `read` and **`ipc_echo`**. **`proc_user_run_dispatch`** fixed **READY starvation** after blocked syscalls. **Observability** added macro-gated **`LOG_*`** and a **LibertyOS Web UI** with **server-side serial demux**.
+
+---
+
+## Related documents
+
+| Document | Contents |
+|----------|----------|
+| [01_architecture.md](01_architecture.md) | Current architecture |
+| [02_call_chains.md](02_call_chains.md) | Block/wakeup call trees |
+| [README.md](README.md) | Operator quick start |
+
+---
+
+*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*

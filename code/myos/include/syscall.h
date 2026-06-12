@@ -8,7 +8,13 @@
 #define SYS_getpid          172
 #define SYS_fork            214
 #define SYS_waitpid         260
+#define SYS_yield           247
 #define SYS_execve          221
+#define SYS_sem_create      2001
+#define SYS_sem_wait        2002
+#define SYS_sem_post        2003
+#define SYS_sem_getval      2004
+#define SYS_ipc_shm_map     2005
 #define SYS_osviz_event     1000
 #define SYS_osviz_snap      1001
 

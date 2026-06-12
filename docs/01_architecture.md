@@ -1,10 +1,8 @@
 # myos — System Architecture
 
-**Target:** RISC-V64 (`rv64gc`), QEMU `virt`, OpenSBI firmware (M→S handoff), supervisor-mode kernel.  
-**User isolation:** Sv39 per-process page tables; user VA window `0x80400000`–`0x80480000`.  
-**Console:** MMIO NS16550 @ `0x10000000` (poll-only on the shell path).
+**Scope:** RISC-V64 (`rv64gc`), QEMU `virt`, OpenSBI M→S handoff, Sv39 user isolation, NS16550 console with RX IRQ + ring buffer, cooperative `proc_sched` for user processes.
 
-This document describes overall structure, boot flow, observability, and core execution paths.
+Paths refer to `code/myos/` unless noted.
 
 ---
 
@@ -30,11 +28,11 @@ start_kernel()                    [boot/kernel.c]
   • trap_init()                   stvec = trap_vector
   • LOG_INIT() / LOG_BOOT_BANNER()
   • fs_init()                     ramfs + embedded /home
-  • proc_init() / proc_user_init()
+  • proc_init() / proc_user_init() / sem_init()
   • pmm_init()                    physical page allocator
   • vm_init()                     Sv39 kernel page table
   • plic_init()
-  • uart_irq_enable()             RX IRQ off; poll for shell
+  • uart_irq_enable()             PLIC + UART IER RX; ring buffer active
   • timer_init()                  ~100 Hz via SBI set_timer
   • sched_init()                  soft-IRQ hook for demo tasks
   • os_main()                     (placeholder)
@@ -42,24 +40,23 @@ start_kernel()                    [boot/kernel.c]
   • console_run()  OR  debug_autorun_user_and_exit()
 ```
 
-**Build flags**
+### Build flags
 
 | Flag | Effect |
 |------|--------|
 | `make` (default) | `-DDEBUG=1 -DCONFIG_LOG=1` — kernel `LOG_*` macros emit JSON |
 | `make DEBUG=0` | All `LOG_*` compile to no-ops; no `LOG {...}` on serial |
-| `make AUTORUN=hi` | Skip login; run one user ELF then poweroff |
+| `make AUTORUN=ipc_echo` | Skip login; run one user ELF then poweroff |
 
-**Core paths to remember**
+### Core paths
 
 | Path | Summary |
 |------|---------|
 | **Boot** | `start.S` → `start_kernel` → subsystems → `console_run` |
 | **Syscall** | User `ecall` → `trap_vector` → `trap_handler` → `do_syscall` → `sret` |
 | **User program** | Shell `./prog` → `proc_spawn_exec_wait` → `proc_user_run` → `enter_uspace` → user → `SYS_exit` → `after_uspace` → `proc_wait` |
-| **File (kernel)** | Shell `cat`/`ls` → `fs_*` on ramfs (no syscall) |
-| **File (user)** | `ecall` → `sys_open`/`read`/`write` → `fs_*` + `copy_*_user` |
-| **Scheduling** | Timer IRQ → `timer_handler`; preemptive `schedule()` **disabled** on OpenSBI build; demo `spawn worker` uses `task_create` + `switch_to` |
+| **Block / wake** | Syscall → `proc_block` → `proc_sched_run_ready` + `wfi` → IRQ → `proc_wakeup` → `proc_user_run_dispatch` |
+| **IPC demo** | `./ipc_echo` → fork producer/consumer → sem + shared page `@ USER_IPC_BASE` |
 | **Observability** | `LOG_*` → `printf` → UART; optional host capture / Web demux (see §8) |
 
 ---
@@ -75,12 +72,13 @@ start_kernel()                    [boot/kernel.c]
                                        │ ecall / page fault
                     ┌──────────────────▼──────────────────┐
                     │        Trap & syscall layer           │
-                    │  trap_vector, trap_handler          │
-                    │  do_syscall, vm_fault_handle        │
+                    │  trap_vector, trap_handler            │
+                    │  do_syscall, vm_fault_handle          │
                     └──────────────────┬──────────────────┘
          ┌─────────────────────────────┼─────────────────────────────┐
          │              Kernel core (S-mode)                        │
-         │  Process (proc, proc_user)  Memory (pmm, vm)             │
+         │  Process (proc, proc_user, proc_sched)                   │
+         │  Memory (pmm, vm, ipc_shm)  Semaphores (sem)           │
          │  Scheduler (sched — demo tasks)  LOG_* / trap_diag       │
          └─────────────────────────────┬─────────────────────────────┘
                                        │
@@ -90,7 +88,7 @@ start_kernel()                    [boot/kernel.c]
                                        │
          ┌─────────────────────────────▼─────────────────────────────┐
          │  Drivers & platform                                         │
-         │  UART (boot/uart.c)  PLIC (interrupt/plic.c)                │
+         │  UART (boot/uart.c)  PLIC (interrupt/plic.c)               │
          │  Timer (interrupt/timer.c, SBI)  Power (boot/power.c, SBI)  │
          └─────────────────────────────┬─────────────────────────────┘
                                        │
@@ -105,9 +103,10 @@ start_kernel()                    [boot/kernel.c]
 | Module | Primary paths | Responsibility |
 |--------|---------------|----------------|
 | **Boot** | `boot/start.S`, `boot/kernel.c`, `boot/uart.c`, `boot/power.c`, `boot/osviz_k.c` | Entry, init order, UART, shutdown, structured LOG |
-| **Trap / IRQ** | `interrupt/entry.S`, `interrupt/trap.c`, `interrupt/timer.c`, `interrupt/plic.c`, `interrupt/trap_diag.c` | `trap_vector`, exceptions, timer, optional trap UART diag |
-| **Memory** | `mem/pmm.c`, `mem/default_pmm.c`, `mem/vm.c` | Physical pages (`alloc_pages`), Sv39 walk/map/activate, demand faults |
-| **Process** | `proc/proc.c`, `proc/proc_user.c`, `proc/syscall.c`, `proc/copy_user.c`, `proc/sched.c` | PCB, ELF exec, fork/wait, syscalls, uaccess |
+| **Trap / IRQ** | `interrupt/entry.S`, `interrupt/trap.c`, `interrupt/timer.c`, `interrupt/plic.c`, `interrupt/trap_diag.c` | `trap_vector`, exceptions, timer, external IRQ |
+| **Memory** | `mem/pmm.c`, `mem/vm.c`, `mem/ipc_shm.c` | Physical pages, Sv39, shared IPC mapping |
+| **Process** | `proc/proc.c`, `proc/proc_user.c`, `proc/proc_sched.c`, `proc/syscall.c` | PCB, ELF exec, fork/wait, block/wakeup, syscalls |
+| **Sync / IPC** | `proc/sem.c`, `mem/ipc_shm.c` | Kernel semaphores, shared page for user IPC |
 | **Filesystem** | `fs/fs.c`, `fs/home_data.c`, `tools/pack_home.py` | In-memory ramfs, embedded home image |
 | **Console** | `usr/console.c`, `usr/autorun.c` | Login, shell commands, `./prog` spawn |
 | **User binaries** | `home/root/*.c`, `usr/crt0.S`, `ld/user.ld` | Programs linked for user VA |
@@ -129,7 +128,7 @@ start_kernel()                    [boot/kernel.c]
 │   [USER_MEM_BASE, USER_MEM_END) = [0x80400000, 0x80480000)   │
 │   ELF PT_LOAD mapped at p_vaddr                              │
 │   Stack: 4 pre-mapped pages below USER_STACK_TOP (0x80470000)│
-│   Extra stack pages: demand-mapped on store fault            │
+│   IPC shared page mapped at USER_IPC_BASE (fork-shared)      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -139,7 +138,48 @@ start_kernel()                    [boot/kernel.c]
 
 ---
 
-## 5. Trap / `sscratch` model (RISC-V, OpenSBI)
+## 5. UART input (IRQ + ring)
+
+```text
+Host keyboard → QEMU -serial stdio → NS16550 RX
+        │
+        ▼
+PLIC UART0_IRQ (10) → trap_vector → external_interrupt_handler
+        │
+        ▼
+uart_irq_handler()          [boot/uart.c]
+  • drain RHR → uart_ring_put (128-byte ring)
+  • proc_wakeup(&uart_read_wq)
+        │
+        ▼
+Blocked reader (sys_read fd=0 → uart_readc_wait → proc_block)
+        │
+        ▼
+proc_sched_run_ready() → proc_user_run_dispatch(woken pid)
+```
+
+Shell line editing (`uart_read_line`) and user `read(0)` both consume the same ring when `uart_rx_use_irq` is set.
+
+---
+
+## 6. User process scheduling model
+
+```text
+proc_user_run(pid)                    depth++, save run_saved_cont
+  └─ enter_uspace → user → syscall
+        ├─ proc_block(chan)           BLOCKED; sched others; wfi for IRQ
+        │     └─ proc_sched_run_ready()
+        │           └─ proc_user_run_dispatch(next)
+        │                 ├─ depth==0 → proc_user_run(next)
+        │                 └─ depth>0, READY → proc_user_run_resume(next)
+        └─ SYS_exit → after_uspace    depth--, return to waiter
+```
+
+**Do not** nest `proc_user_run` inside `proc_block` with a blind `proc_user_run_inflight` filter — blocked syscalls still hold `depth>0` but must be resumable after `proc_wakeup`.
+
+---
+
+## 7. Trap / `sscratch` model (RISC-V, OpenSBI)
 
 ```text
 In U-mode:  sscratch = top of current process kernel stack
@@ -160,27 +200,27 @@ Return to kernel after SYS_exit:
 
 ---
 
-## 6. Data flow: interactive session (QEMU serial)
+## 8. Data flow: interactive session (QEMU serial)
 
 ```text
 Host keyboard
   → QEMU -serial stdio
-  → NS16550 MMIO RX
-  → uart_getc / uart_read_line
+  → NS16550 MMIO RX (IRQ → ring)
+  → uart_readc_wait / uart_read_line
   → console.c (login_session → shell_loop)
         │
         ├─ Built-in command → fs_* / proc_* / vm_info_* (kernel)
         │
-        └─ ./hi  → proc_spawn_exec_wait
+        └─ ./ipc_echo  → proc_spawn_exec_wait
                     → proc_load_elf (fs_read_file + vm_map)
                     → proc_user_run → enter_uspace
-                    → user writes via SYS_write → uart_putc
+                    → fork + sem + shm → producer/consumer
                     → SYS_exit → proc_wait → prompt
 ```
 
 ---
 
-## 7. Data flow: Web UI session
+## 9. Data flow: Web UI session
 
 ```text
 Browser (desktop.html)
@@ -203,11 +243,11 @@ See [05_web_frontend.md](05_web_frontend.md) and [04_logging_and_osviz.md](04_lo
 
 ---
 
-## 8. Observability (summary)
+## 10. Observability (summary)
 
 ```text
 Kernel (DEBUG=1):
-  LOG_BOOT / LOG_TRAP / LOG_PROC / …  [include/osviz_k.h]
+  LOG_BOOT / LOG_TRAP / LOG_PROC / LOG_SCHED / …  [include/osviz_k.h]
         → osviz_event()               [boot/osviz_k.c]
         → printf("LOG {...}\n")       → UART
 
@@ -220,7 +260,7 @@ Web (current):
 
 ---
 
-## 9. Related documents
+## Related documents
 
 | Document | Contents |
 |----------|----------|
@@ -232,4 +272,4 @@ Web (current):
 
 ---
 
-*Paths and symbols refer to `code/myos/` as of Sv39 + `proc_spawn_exec_wait` + Web serial demux.*
+*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*

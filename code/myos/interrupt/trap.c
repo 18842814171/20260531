@@ -67,6 +67,7 @@ static int pc_in_task_stack(reg_t pc)
 static void trap_log_first_return(reg_t return_pc, reg_t trap_epc)
 {
 	char d[128];
+	reg_t cause;
 
 	/*
 	 * problemrecord check #1: log outer trap return (depth==1) before
@@ -75,10 +76,15 @@ static void trap_log_first_return(reg_t return_pc, reg_t trap_epc)
 	if (kernel_trap_depth != 1)
 		return;
 
+	cause = r_scause();
+	if ((cause & CAUSE_MASK_INTERRUPT) &&
+	    (cause & CAUSE_MASK_ECODE) == TRAP_IRQ_TIMER)
+		return;
+
 	snprintf(d, sizeof(d),
 		 "\"depth\":1,\"return_pc\":\"0x%lx\",\"trap_epc\":\"0x%lx\","
 		 "\"cause\":\"0x%lx\"",
-		 (long)return_pc, (long)trap_epc, (long)r_scause());
+		 (long)return_pc, (long)trap_epc, (long)cause);
 	LOG_TRAP("leave", d);
 }
 
@@ -135,6 +141,11 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 				LOG_PROC("exit", NULL);
 				*return_pc = cxt->pc;
 			}
+		} else if (cxt->a7 == SYS_yield && proc_current_pid() > 0) {
+			*return_pc = proc_user_yield_trap(cxt);
+#ifdef CONFIG_OPENSBI
+			w_sstatus(r_sstatus() | SSTATUS_SPP);
+#endif
 		} else {
 			int was_execve = (cxt->a7 == SYS_execve);
 
@@ -237,8 +248,7 @@ void external_interrupt_handler()
 	stats_inc_ext_irq();
 
 	if (irq == UART0_IRQ) {
-		/* Phase 1: console is poll-only; drain spurious UART RX. */
-		uart_rx_flush();
+		uart_irq_handler();
 	} else if (irq) {
 		printf("unexpected interrupt irq = %d\n", irq);
 	}

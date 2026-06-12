@@ -18,6 +18,10 @@ home_bin_fork_demo:
 home_bin_hi:
     .incbin "../home/root/hi"
 
+.globl home_bin_ipc_echo
+home_bin_ipc_echo:
+    .incbin "../home/root/ipc_echo"
+
 .globl home_bin_pagefault
 home_bin_pagefault:
     .incbin "../home/root/pagefault"
@@ -29,3 +33,7 @@ home_bin_return0:
 .globl home_bin_segfault_null
 home_bin_segfault_null:
     .incbin "../home/root/segfault_null"
+
+.globl home_bin_yield_demo
+home_bin_yield_demo:
+    .incbin "../home/root/yield_demo"

@@ -30,6 +30,7 @@ int      vm_map_2m(pagetable_t pt, uint64_t va, uint64_t pa, int perm);
 int      vm_map_user_page(pagetable_t pt, uint64_t va, const void *src,
 			  uint64_t len, int perm);
 int      vm_map_user_zero(pagetable_t pt, uint64_t va, uint64_t len, int perm);
+int      vm_map_user_existing(pagetable_t pt, uint64_t va, void *page, int perm);
 pagetable_t vm_fork_copy(pagetable_t parent);
 uint64_t    vm_pte_at(pagetable_t pt, uint64_t va);
 

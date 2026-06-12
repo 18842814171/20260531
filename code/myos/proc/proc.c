@@ -100,6 +100,15 @@ void proc_set_name(int pid, const char *name)
 	}
 }
 
+enum proc_state proc_get_state(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return PROC_UNUSED;
+	return procs[slot].state;
+}
+
 void proc_set_state(int pid, enum proc_state st)
 {
 	int i;
@@ -116,6 +125,15 @@ void proc_set_state(int pid, enum proc_state st)
 			return;
 		}
 	}
+}
+
+int proc_pid_by_slot(int slot)
+{
+	if (slot < 0 || slot >= PROC_MAX)
+		return -1;
+	if (procs[slot].state == PROC_UNUSED)
+		return -1;
+	return procs[slot].pid;
 }
 
 pagetable_t proc_pagetable(int pid)
@@ -143,6 +161,26 @@ int proc_slot_by_pid(int pid)
 	for (i = 0; i < PROC_MAX; i++) {
 		if (procs[i].pid == pid && procs[i].state != PROC_UNUSED)
 			return i;
+	}
+	return -1;
+}
+
+static int sched_rr = 1;
+
+int proc_pick_next_ready(void)
+{
+	int tries, slot;
+
+	for (tries = 0; tries < PROC_MAX; tries++) {
+		slot = (sched_rr + tries) % PROC_MAX;
+		if (slot == 0)
+			continue;
+		if (procs[slot].state != PROC_READY)
+			continue;
+		if (!procs[slot].pagetable)
+			continue;
+		sched_rr = (slot + 1) % PROC_MAX;
+		return procs[slot].pid;
 	}
 	return -1;
 }
@@ -183,6 +221,12 @@ int proc_list(struct proc_info *out, int max)
 
 void proc_mark_zombie(int pid)
 {
+	int slot = proc_slot_by_pid(pid);
+	int ppid = -1;
+
+	if (slot >= 0)
+		ppid = procs[slot].ppid;
+	printf("[zombie] pid=%d parent=%d\n", pid, ppid);
 	proc_set_state(pid, PROC_ZOMBIE);
 }
 

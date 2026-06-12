@@ -3,6 +3,8 @@
 
 #include "types.h"
 
+#define USER_IPC_BASE  0x80460000UL
+
 /* Syscall stubs (usr/usys.S). */
 int gethid(unsigned int *hid);
 int getpid(void);
@@ -13,7 +15,13 @@ int write(int fd, const void *buf, int len);
 void exit(int status) __attribute__((noreturn));
 int fork(void);
 int waitpid(int pid);
+int yield(void);
 int execve(const char *path);
+int sem_create(int initial);
+int sem_wait(int id);
+int sem_post(int id);
+int sem_getval(int id);
+int ipc_shm_map(void);
 
 /* usr/ulib.c */
 char *strcpy(char *dst, const char *src);

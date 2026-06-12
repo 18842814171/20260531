@@ -5,7 +5,7 @@ void plic_init(void)
 {
 	int hart = r_tp();
 
-	/* UART RX: poll-only (Phase 1). Phase 2 enables PLIC UART for irq lab. */
+	/* UART PLIC source enabled in uart_irq_enable() after ring init. */
 	(void)UART0_IRQ;
 	*(uint32_t*)PLIC_MTHRESHOLD(hart) = 0;
 

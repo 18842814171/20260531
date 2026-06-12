@@ -1,6 +1,6 @@
 # LibertyOS Web Frontend
 
-Browser UI for interactive QEMU sessions: terminal, file browser, and kernel event bubbles. Code under `code/web/`.
+**Scope:** Browser UI for interactive QEMU sessions — terminal, file browser, and kernel event bubbles. Code under `code/web/`.
 
 ---
 
@@ -160,14 +160,14 @@ until "Welcome, root." appears
 
 ---
 
-## 9. Related documents
+## Related documents
 
 | Document | Contents |
 |----------|----------|
 | [04_logging_and_osviz.md](04_logging_and_osviz.md) | LOG format, host tools |
-| [01_architecture.md](01_architecture.md) | §7 Web data flow |
-| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §12 Web issues |
+| [01_architecture.md](01_architecture.md) | §9 Web data flow |
+| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §11 Web issues |
 
 ---
 
-*Web path: one WebSocket, server-side demux, client-side welcome gate. File persistence to `events.jsonl` is deferred.*
+*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*

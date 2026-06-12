@@ -2,13 +2,14 @@
 #include "osviz_k.h"
 #include "stats.h"
 #include "trap_csr.h"
+#include "proc_sched.h"
 
 /*
  * NS16550 MMIO console (QEMU virt, -serial stdio).
- * Phase 1: poll-only — uart_try_getc / uart_putc on LSR/RHR.
- * UART IRQ + ring buffer: Phase 2 (interrupt/uart_irq.c).
+ * Phase 2: UART RX IRQ + PLIC → ring buffer; reads use ring_get only.
+ * Poll and IRQ paths are mutually exclusive (uart_rx_use_irq).
  *
- * IRQs are masked inside busy poll loops so timer traps cannot nest
+ * IRQs are masked inside poll-mode busy loops so timer traps cannot nest
  * during trap_vector reg_restore while blocked in uart_getc.
  */
 
@@ -20,6 +21,8 @@
 #define UART_LCR 3
 #define UART_LSR 5
 
+#define UART_IER_RX 0x01
+
 #define UART_LCR_DLAB (1 << 7)
 #define UART_LCR_8N1  3
 
@@ -28,6 +31,19 @@
 
 #define UART_FCR_ENABLE (1 << 0)
 #define UART_FCR_CLEAR  (0x06)
+
+#define UART_RING_SIZE 128
+
+struct uart_ring {
+	char buf[UART_RING_SIZE];
+	int head;
+	int tail;
+};
+
+static struct uart_ring uart_rx_ring;
+static struct wait_queue uart_read_wq;
+static int uart_rx_pushback = -1;
+static int uart_rx_use_irq = 0;
 
 static inline uint8_t uart_read_reg(int reg)
 {
@@ -42,6 +58,7 @@ static inline void uart_write_reg(int reg, uint8_t v)
 static reg_t uart_irq_save(void)
 {
 	reg_t s = r_sstatus();
+
 	cpu_irq_disable();
 	return s;
 }
@@ -50,6 +67,85 @@ static void uart_irq_restore(reg_t saved)
 {
 	if (saved & SSTATUS_SIE)
 		cpu_irq_enable();
+}
+
+static int uart_mmio_try_getc(void)
+{
+	int c;
+
+	if ((uart_read_reg(UART_LSR) & UART_LSR_RX_READY) == 0)
+		return -1;
+	c = uart_read_reg(UART_RHR);
+	if (c == 0)
+		return -1;
+	stats_inc_uart_rx();
+	return c;
+}
+
+static void uart_mmio_drain(void)
+{
+	int n = 0;
+
+	while (uart_read_reg(UART_LSR) & UART_LSR_RX_READY) {
+		(void)uart_read_reg(UART_RHR);
+		if (++n >= 256)
+			break;
+	}
+}
+
+static void uart_ring_put(int c)
+{
+	int next = (uart_rx_ring.head + 1) % UART_RING_SIZE;
+
+	if (next == uart_rx_ring.tail)
+		return;
+	uart_rx_ring.buf[uart_rx_ring.head] = (char)c;
+	uart_rx_ring.head = next;
+	stats_inc_uart_rx();
+}
+
+static int uart_ring_get(void)
+{
+	int c;
+
+	if (uart_rx_pushback >= 0) {
+		c = uart_rx_pushback;
+		uart_rx_pushback = -1;
+		return c;
+	}
+	if (uart_rx_ring.head == uart_rx_ring.tail)
+		return -1;
+	c = (unsigned char)uart_rx_ring.buf[uart_rx_ring.tail];
+	uart_rx_ring.tail = (uart_rx_ring.tail + 1) % UART_RING_SIZE;
+	return c;
+}
+
+static void uart_ring_clear(void)
+{
+	uart_rx_ring.head = 0;
+	uart_rx_ring.tail = 0;
+	uart_rx_pushback = -1;
+}
+
+static void uart_read_wakeup(void)
+{
+	proc_wakeup(&uart_read_wq);
+}
+
+void uart_irq_handler(void)
+{
+	int c;
+	int got = 0;
+
+	while (uart_read_reg(UART_LSR) & UART_LSR_RX_READY) {
+		c = uart_read_reg(UART_RHR);
+		if (c == 0)
+			continue;
+		uart_ring_put(c);
+		got = 1;
+	}
+	if (got)
+		uart_read_wakeup();
 }
 
 void uart_init(void)
@@ -61,14 +157,20 @@ void uart_init(void)
 	uart_write_reg(UART_LCR, UART_LCR_8N1);
 	uart_write_reg(UART_FCR, UART_FCR_ENABLE | UART_FCR_CLEAR);
 
+	uart_ring_clear();
+	uart_read_wq.head_slot = -1;
+	uart_rx_use_irq = 0;
 	uart_rx_flush();
 }
 
 void uart_irq_enable(void)
 {
-	/* Console RX is poll-only; keep UART interrupts disabled. */
-	uart_write_reg(UART_IER, 0x00);
-	LOG_IRQ("uart_init", "\"rx_irq\":false,\"rx_poll\":true");
+	uart_ring_clear();
+	uart_mmio_drain();
+	plic_uart_enable();
+	uart_write_reg(UART_IER, UART_IER_RX);
+	uart_rx_use_irq = 1;
+	LOG_IRQ("uart_init", "\"rx_irq\":true,\"rx_poll\":false,\"ring\":128");
 }
 
 int uart_putc(char ch)
@@ -90,37 +192,47 @@ void uart_puts(char *s)
 
 int uart_try_getc(void)
 {
+	if (uart_rx_use_irq) {
+		reg_t irq = uart_irq_save();
+		int c = uart_ring_get();
+
+		uart_irq_restore(irq);
+		return c;
+	}
+	return uart_mmio_try_getc();
+}
+
+int uart_readc_wait(void)
+{
 	int c;
 
-	if ((uart_read_reg(UART_LSR) & UART_LSR_RX_READY) == 0)
-		return -1;
-	c = uart_read_reg(UART_RHR);
-	if (c == 0)
-		return -1;
-	stats_inc_uart_rx();
-	return c;
+	for (;;) {
+		c = uart_try_getc();
+		if (c >= 0)
+			return c;
+		if (uart_rx_use_irq)
+			proc_block(&uart_read_wq);
+		else
+			script_bg_poll();
+	}
 }
 
 int uart_getc(void)
 {
-	int c;
-	reg_t irq = uart_irq_save();
-
-	while ((c = uart_try_getc()) < 0)
-		;
-	uart_irq_restore(irq);
-	return c;
+	return uart_readc_wait();
 }
 
 void uart_rx_flush(void)
 {
-	int n = 0;
+	if (uart_rx_use_irq) {
+		reg_t irq = uart_irq_save();
 
-	while (uart_read_reg(UART_LSR) & UART_LSR_RX_READY) {
-		(void)uart_read_reg(UART_RHR);
-		if (++n >= 256)
-			break;
+		uart_ring_clear();
+		uart_mmio_drain();
+		uart_irq_restore(irq);
+		return;
 	}
+	uart_mmio_drain();
 }
 
 void uart_rx_flush_deep(void)
@@ -137,35 +249,15 @@ void uart_rx_drain_quiet(unsigned quiet_need, unsigned max_spin)
 
 	uart_rx_flush_deep();
 	while (spin < max_spin) {
-		if (uart_read_reg(UART_LSR) & UART_LSR_RX_READY) {
-			(void)uart_read_reg(UART_RHR);
+		if (uart_try_getc() >= 0)
 			idle = 0;
-		} else if (++idle >= quiet_need) {
+		else if (++idle >= quiet_need)
 			return;
-		}
 		spin++;
 	}
 }
 
-int uart_read_buf(char *buf, int maxlen)
-{
-	int i = 0;
-
-	if (!buf || maxlen <= 0)
-		return 0;
-
-	while (i < maxlen) {
-		int c = uart_try_getc();
-
-		if (c < 0)
-			break;
-		buf[i++] = (char)c;
-	}
-
-	return i;
-}
-
-int uart_read_line(char *buf, int maxlen)
+static int uart_read_line_poll(char *buf, int maxlen)
 {
 	int i = 0;
 	reg_t irq = uart_irq_save();
@@ -178,22 +270,11 @@ int uart_read_line(char *buf, int maxlen)
 	while (i < maxlen - 1) {
 		int c;
 
-		/*
-		 * Poll with try_getc only — do not call uart_getc() here.
-		 * uart_getc() save/restores IRQ independently; nested restore
-		 * can re-enable timer IRQ during reg_restore and corrupt the
-		 * caller stack (seen as buf==NULL in this frame).
-		 */
-		while ((c = uart_try_getc()) < 0)
+		while ((c = uart_mmio_try_getc()) < 0)
 			script_bg_poll();
 
 		if (c == '\r' || c == '\n') {
 			if (c == '\r') {
-				/*
-				 * Swallow optional LF after CR only.
-				 * Do not drain the whole RX FIFO — loopback can
-				 * keep LSR ready forever and hang the shell.
-				 */
 				if (uart_read_reg(UART_LSR) & UART_LSR_RX_READY)
 					(void)uart_read_reg(UART_RHR);
 			}
@@ -220,17 +301,80 @@ int uart_read_line(char *buf, int maxlen)
 	return i;
 }
 
+static int uart_read_line_irq(char *buf, int maxlen)
+{
+	int i = 0;
+
+	if (!buf || maxlen < 2)
+		return 0;
+
+	while (i < maxlen - 1) {
+		int c = uart_readc_wait();
+
+		if (c == '\r' || c == '\n') {
+			if (c == '\r') {
+				int n = uart_try_getc();
+
+				if (n >= 0 && n != '\n') {
+					reg_t irq = uart_irq_save();
+
+					uart_rx_pushback = n;
+					uart_irq_restore(irq);
+				}
+			}
+			break;
+		}
+		if (c == 3)
+			continue;
+		if (c == 8 || c == 127) {
+			if (i > 0) {
+				i--;
+				uart_puts("\b \b");
+			}
+			continue;
+		}
+		if (c >= 32 && c < 127) {
+			buf[i++] = (char)c;
+			uart_putc((char)c);
+		}
+	}
+
+	buf[i] = '\0';
+	uart_puts("\n");
+	return i;
+}
+
+int uart_read_line(char *buf, int maxlen)
+{
+	if (uart_rx_use_irq)
+		return uart_read_line_irq(buf, maxlen);
+	return uart_read_line_poll(buf, maxlen);
+}
+
 int uart_prompt_and_read_line(const char *prompt, char *buf, int maxlen)
 {
-	int n;
-	reg_t irq = uart_irq_save();
-
 	if (prompt)
 		uart_puts((char *)prompt);
 	uart_rx_flush();
-	n = uart_read_line(buf, maxlen);
-	uart_irq_restore(irq);
-	return n;
+	return uart_read_line(buf, maxlen);
+}
+
+int uart_read_buf(char *buf, int maxlen)
+{
+	int i = 0;
+
+	if (!buf || maxlen <= 0)
+		return 0;
+
+	while (i < maxlen) {
+		int c = uart_try_getc();
+
+		if (c < 0)
+			break;
+		buf[i++] = (char)c;
+	}
+
+	return i;
 }
 
 #ifdef CONFIG_UART_LSR_DIAG
@@ -277,7 +421,7 @@ void uart_hw_test(void)
 {
 	int c;
 
-	uart_puts("\nUART TEST (poll LSR/RHR; type keys + Enter)\n");
+	uart_puts("\nUART TEST (IRQ ring or poll; type keys + Enter)\n");
 	for (;;) {
 		c = uart_try_getc();
 		if (c < 0)

@@ -16,6 +16,7 @@ enum proc_state {
 	PROC_UNUSED = 0,
 	PROC_READY,
 	PROC_RUNNING,
+	PROC_BLOCKED,
 	PROC_ZOMBIE,
 };
 
@@ -30,7 +31,10 @@ void proc_init(void);
 int  proc_alloc(const char *name, int ppid);
 void proc_set_name(int pid, const char *name);
 void proc_set_state(int pid, enum proc_state st);
+enum proc_state proc_get_state(int pid);
 int  proc_slot_by_pid(int pid);
+int  proc_pid_by_slot(int slot);
+int  proc_pick_next_ready(void);
 int  proc_count(void);
 int  proc_list(struct proc_info *out, int max);
 
