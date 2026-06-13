@@ -93,7 +93,8 @@ user: SYS_read (63), fd=0
  └─ sys_read → uart_readc_wait     boot/uart.c
      ├─ uart_try_getc → uart_ring_get
      └─ if empty: proc_block(&uart_read_wq)
-           └─ proc_sched_run_ready → proc_user_run_dispatch
+           └─ proc_sched → proc_kctx_switch → proc_scheduler_loop
+                 └─ proc_pick_next_ready_resume → back to uart_readc_wait
 ```
 
 ---
@@ -112,27 +113,37 @@ user: SYS_waitpid (260)
 
 ---
 
-## 8. Block, wakeup, and resume
+## 8. Block, wakeup, and resume (Stage 2 — xv6-style)
 
 ```text
 proc_block(chan)                proc/proc_sched.c
  ├─ wq_enqueue; PROC_BLOCKED
  └─ while BLOCKED:
-     ├─ proc_sched_run_ready()
-     │   └─ proc_user_run_dispatch(next)
-     │         ├─ depth==0 → proc_user_run(next)
-     │         └─ depth>0, READY → proc_user_run_resume(next)
-     └─ cpu_irq_enable(); wfi(); cpu_irq_disable()
+     └─ proc_sched()
+           ├─ proc_kctx_set_asleep(pid, 1)
+           └─ proc_kctx_switch(p→kctx, sched→kctx)
+                 proc_scheduler_loop()     [sched_stack, proc/proc_sched.c]
+                   ├─ proc_sched_run_ready()
+                   │     └─ proc_user_run_dispatch(next)   depth==0 only
+                   ├─ proc_pick_next_ready_resume()
+                   │     └─ proc_kctx_switch(sched, p→kctx)   kctx_asleep
+                   └─ wfi
+           └─ proc_kctx_set_asleep(pid, 0)   /* return in proc_block */
 
 proc_wakeup(chan)
  └─ wq_dequeue → PROC_READY
+
+proc_kctx_switch(old, new)      interrupt/kctx_switch.S
+ └─ save ra/sp/s0–s11 to *old; load from *new; ret
 
 UART IRQ path:
  external_interrupt_handler
    └─ uart_irq_handler
          ├─ uart_ring_put
-         └─ proc_wakeup(&uart_read_wq)
+         └─ proc_wakeup(&uart_read_wq)    → shell or user reader resumes via kctx
 ```
+
+**Shell path:** pid 1 has no pagetable; blocks in `uart_read_line` → same `proc_sched` / `kctx_asleep` resume as user `sem_wait`.
 
 ---
 
@@ -218,8 +229,8 @@ Definitions: `include/syscall.h`.
 | [03_module_index.md](03_module_index.md) | Module entry points |
 | [04_logging_and_osviz.md](04_logging_and_osviz.md) | LOG macro details |
 | [05_web_frontend.md](05_web_frontend.md) | Web demux |
-| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | Scheduling bugs (§13) |
+| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | Scheduling bugs (§12) |
 
 ---
 
-*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*
+*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*

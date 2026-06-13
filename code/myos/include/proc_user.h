@@ -33,9 +33,11 @@ int proc_load_elf(int pid, const char *path);
 
 int proc_user_run(int pid);
 int proc_user_run_inflight(int pid);
-/* depth==0 fresh run, or READY after block-in-syscall resume */
+/* false when pid owns an active proc_user_run continuation (depth>0) */
 int proc_user_run_schedulable(int pid);
 int proc_user_run_dispatch(int pid);
+/* current_pid to use while running other processes from proc_block(). */
+int proc_user_run_sched_baseline(int blocked_pid);
 void proc_user_run_unwind_blocked(int pid);
 reg_t proc_user_yield_trap(struct context *cxt);
 void proc_user_exit(int pid, int status);

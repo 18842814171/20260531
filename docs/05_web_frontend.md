@@ -156,6 +156,8 @@ until "Welcome, root." appears
 | `./hi` no output | Same gate issue, or kernel exec failure | QEMU direct: `./sh/start_qemu.sh` |
 | LOG lines in terminal | Old server without demux | Restart `start_server.sh` |
 | JSON half-lines in UI | Partial flush bug | Update `SerialDemux` (hold until `\n`) |
+| Keyboard ignored in QEMU direct | `DEBUG=y` pipes stdout to osviz | Use **`DEBUG=n ./sh/start_qemu.sh`** on a real terminal |
+| Shell frozen at `login:` (post–Stage 2) | Scheduler did not resume pid 1 after UART block | Fixed via **`kctx_asleep`** (2026-06-13); rebuild kernel |
 | Input ignored | WebSocket down | Status dot / reconnect |
 
 ---
@@ -166,8 +168,9 @@ until "Welcome, root." appears
 |----------|----------|
 | [04_logging_and_osviz.md](04_logging_and_osviz.md) | LOG format, host tools |
 | [01_architecture.md](01_architecture.md) | §9 Web data flow |
-| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §11 Web issues |
+| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §11 Web issues; §12 scheduling |
+| [logs/0613.md](../logs/0613.md) | 2026-06-13 Stage 1–2 log |
 
 ---
 
-*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*
+*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*

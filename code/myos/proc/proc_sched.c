@@ -8,6 +8,12 @@
 static struct wait_queue child_wait_wq[PROC_MAX];
 static int wq_slot_next[PROC_MAX];
 
+#define SCHED_STACK_SIZE 4096
+
+static uint8_t sched_stack[SCHED_STACK_SIZE] __attribute__((aligned(16)));
+static struct proc_kcontext sched_kctx;
+static int sched_ctx_ready;
+
 static void wq_enqueue(struct wait_queue *wq, int pid)
 {
 	int slot = proc_slot_by_pid(pid);
@@ -31,6 +37,44 @@ static int wq_dequeue(struct wait_queue *wq)
 	return pid;
 }
 
+static void sched_ctx_init_once(void)
+{
+	if (sched_ctx_ready)
+		return;
+	sched_kctx.sp = (reg_t)&sched_stack[SCHED_STACK_SIZE];
+	sched_kctx.ra = (reg_t)0; /* set on first proc_scheduler_loop entry below */
+	sched_ctx_ready = 1;
+}
+
+/*
+ * xv6 scheduler loop: runs on sched_stack, not on any blocked process frame.
+ * Fresh READY (depth==0) still use proc_user_run_dispatch (Stage 3 replaces that).
+ * Woken blockers (depth>0) resume via proc_kctx_switch into proc_sched().
+ */
+static void proc_scheduler_loop(void)
+{
+	for (;;) {
+		proc_sched_run_ready();
+
+		for (;;) {
+			int pid = proc_pick_next_ready_resume();
+			char buf[64];
+
+			if (pid <= 0)
+				break;
+			snprintf(buf, sizeof(buf), "\"pid\":%d,\"via\":\"kctx\"", pid);
+			LOG_SCHED("resume", buf);
+			proc_set_state(pid, PROC_RUNNING);
+			proc_set_current_pid(pid);
+			proc_kctx_switch(&sched_kctx, proc_kctx(pid));
+		}
+
+		cpu_irq_enable();
+		asm volatile("wfi");
+		cpu_irq_disable();
+	}
+}
+
 void proc_sched_init(void)
 {
 	int i;
@@ -39,6 +83,8 @@ void proc_sched_init(void)
 		wq_slot_next[i] = -1;
 		child_wait_wq[i].head_slot = -1;
 	}
+	sched_ctx_init_once();
+	sched_kctx.ra = (reg_t)proc_scheduler_loop;
 }
 
 void *proc_child_wait_chan(int child_pid)
@@ -71,6 +117,26 @@ void proc_wakeup(void *chan)
 	LOG_SCHED("wakeup", buf);
 }
 
+/*
+ * Switch away to scheduler; returns when this process is picked for resume.
+ * Caller must already be BLOCKED (proc_block sets state before calling).
+ */
+void proc_sched(void)
+{
+	int pid = proc_current_pid();
+	struct proc_kcontext *k;
+
+	if (pid <= 0)
+		return;
+	sched_ctx_init_once();
+	k = proc_kctx(pid);
+	if (!k)
+		return;
+	proc_kctx_set_asleep(pid, 1);
+	proc_kctx_switch(k, &sched_kctx);
+	proc_kctx_set_asleep(pid, 0);
+}
+
 void proc_block(void *chan)
 {
 	int pid = proc_current_pid();
@@ -85,22 +151,12 @@ void proc_block(void *chan)
 	wq_enqueue((struct wait_queue *)chan, pid);
 	proc_set_state(pid, PROC_BLOCKED);
 
-	/*
-	 * Single scheduler entry: do not nest proc_user_run here and do not
-	 * jr→after_uspace (unwind). Run other READY processes, then wfi for IRQ.
-	 */
-	while (proc_get_state(pid) == PROC_BLOCKED) {
-		proc_sched_run_ready();
-		if (proc_get_state(pid) != PROC_BLOCKED)
-			break;
-		cpu_irq_enable();
-		asm volatile("wfi");
-		cpu_irq_disable();
-	}
+	while (proc_get_state(pid) == PROC_BLOCKED)
+		proc_sched();
 
 	proc_set_state(pid, PROC_RUNNING);
 	snprintf(buf, sizeof(buf), "\"pid\":%d", pid);
-	LOG_SCHED("resume", buf);
+	LOG_SCHED("unblock", buf);
 }
 
 void proc_sched_run_ready(void)
@@ -108,11 +164,10 @@ void proc_sched_run_ready(void)
 	int next;
 	char buf[64];
 
+	/* Only depth==0 processes (no active continuation) reach dispatch. */
 	for (;;) {
 		next = proc_pick_next_ready();
 		if (next <= 0)
-			return;
-		if (!proc_user_run_schedulable(next))
 			return;
 		snprintf(buf, sizeof(buf), "\"pid\":%d", next);
 		LOG_SCHED("run", buf);

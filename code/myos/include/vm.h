@@ -21,6 +21,9 @@ void     vm_init(void);
 pagetable_t vm_kernel_pt(void);
 pagetable_t vm_create(void);
 void     vm_destroy(pagetable_t pt);
+/* If satp currently maps pt, switch to kernel page table first. */
+void     vm_deactivate_if_active(pagetable_t pt);
+pagetable_t vm_pt_from_satp(reg_t satp);
 
 /* Drop user 4KiB mappings (exec reload); leaves kernel map and page-table nodes. */
 void     vm_clear_user_pages(pagetable_t pt);

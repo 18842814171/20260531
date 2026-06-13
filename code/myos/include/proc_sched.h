@@ -6,6 +6,7 @@ struct wait_queue {
 };
 
 void proc_sched_init(void);
+void proc_sched(void);
 void proc_block(void *chan);
 void proc_wakeup(void *chan);
 void proc_schedule(void);

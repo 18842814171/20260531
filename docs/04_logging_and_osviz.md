@@ -131,6 +131,7 @@ Runtime capture directory when using `serial_reader.py`. See `events/README.md`.
 | Do not expect file logs from Web alone | Demux does not write `events.jsonl` yet (planned P2) |
 | Parse only **complete lines** starting with `LOG ` | Avoid JSON split across reads |
 | Boot `printf` (e.g. `HEAP_START`) is **not** LOG | Still appears in Web terminal `output` |
+| `LOG_SCHED` with `"via":"kctx"` | Resume after `proc_kctx_switch` (Stage 2 block/wakeup) |
 
 ---
 
@@ -142,7 +143,8 @@ Runtime capture directory when using `serial_reader.py`. See `events/README.md`.
 | [02_call_chains.md](02_call_chains.md) | §11 log and Web chains |
 | [05_web_frontend.md](05_web_frontend.md) | SerialDemux and UI |
 | [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §11 Web demux / terminal gate |
+| [logs/0613.md](../logs/0613.md) | Stage 1–2 scheduling migration log |
 
 ---
 
-*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*
+*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*

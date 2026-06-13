@@ -128,6 +128,21 @@ void vm_activate(pagetable_t pt)
 	w_satp((reg_t)satp);
 }
 
+pagetable_t vm_pt_from_satp(reg_t satp)
+{
+	if ((satp >> 60) != (SATP_MODE_SV39 >> 60))
+		return NULL;
+	return (pagetable_t)((satp & ((1UL << 44) - 1)) << 12);
+}
+
+void vm_deactivate_if_active(pagetable_t pt)
+{
+	if (!pt || pt == kernel_pt)
+		return;
+	if (vm_pt_from_satp(r_satp()) == pt)
+		vm_activate(kernel_pt);
+}
+
 pagetable_t vm_kernel_pt(void)
 {
 	return kernel_pt;
@@ -200,6 +215,7 @@ void vm_destroy(pagetable_t pt)
 {
 	if (!pt || pt == kernel_pt)
 		return;
+	vm_deactivate_if_active(pt);
 	vm_free_user_pages(pt);
 	vm_free_ptree(pt, 2);
 	page_free(pt);

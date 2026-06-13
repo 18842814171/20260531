@@ -97,7 +97,7 @@
 | Kind | Functions / symbols |
 |------|---------------------|
 | **Entry** | `proc_init`, `proc_alloc`, `proc_spawn` (`proc/proc.c`) |
-| **Core** | `proc_set_state`, `proc_mark_zombie`, `proc_pagetable`, `proc_user_ctx` |
+| **Core** | `proc_set_state`, `proc_mark_zombie`, `proc_pagetable`, `proc_user_ctx`, `proc_kctx`, `kctx_asleep`, `proc_pick_next_ready` / `_resume` |
 | **Exit** | `proc_set_state(UNUSED)` on reap |
 
 ---
@@ -109,20 +109,23 @@
 | Kind | Functions / symbols |
 |------|---------------------|
 | **Entry** | `proc_spawn_exec_wait`, `proc_user_run`, `SYS_execve` / `SYS_fork` |
-| **Core** | `proc_load_elf`, `proc_enter_uspace`, `proc_wait`, `proc_fork`, `proc_user_run_dispatch`, `proc_user_run_resume` (`proc/proc_user.c`) |
-| **Exit** | `after_uspace` → return to waiter; `proc_wait` returns exit status |
+| **Core** | `proc_load_elf`, `proc_enter_uspace`, `proc_wait`, `proc_fork`, `proc_user_run_dispatch` (`proc/proc_user.c`) |
+| **Exit** | `after_uspace` → return to waiter (Stage 4 target); `proc_wait` returns exit status |
+
+**Note:** `proc_user_run_resume` was removed (2026-06-13). Blocked syscalls resume via `proc_kctx_switch`, not a second `enter_uspace`.
 
 ---
 
 ## Process scheduler (`proc_sched`)
 
-**Role:** Wait queues, block/wakeup, run READY user processes while others sleep.
+**Role:** Wait queues, block/wakeup, dedicated scheduler stack, run READY user processes while others sleep.
 
 | Kind | Functions / symbols |
 |------|---------------------|
-| **Entry** | `proc_block`, `proc_wakeup` from sem/UART/wait paths |
-| **Core** | `proc_sched_run_ready`, `proc_user_run_dispatch` (`proc/proc_sched.c`) |
-| **Exit** | Blocked process resumes when `proc_get_state != BLOCKED` |
+| **Entry** | `proc_block`, `proc_wakeup`, `proc_sched` from sem/UART/wait paths |
+| **Core** | `proc_scheduler_loop`, `proc_sched_run_ready`, `proc_user_run_dispatch`, `proc_pick_next_ready_resume` (`proc/proc_sched.c`, `proc/proc.c`) |
+| **Context switch** | `proc_kctx_switch` (`interrupt/kctx_switch.S`) |
+| **Exit** | Blocked process resumes when `proc_kctx_switch` returns into `proc_sched` → `proc_block` |
 
 ---
 
@@ -231,7 +234,9 @@
 | Question | Answer |
 |----------|--------|
 | When is `vm_activate` called? | Start of `proc_user_run`; `after_uspace` (kernel PT); `trap_return_to_user` |
-| When does stdin block? | `uart_readc_wait` → `proc_block(uart_read_wq)` → IRQ wakeup → `proc_user_run_dispatch` |
+| When does stdin block? | `uart_readc_wait` → `proc_block` → `proc_sched` → `proc_kctx_switch`; IRQ wakeup → `proc_pick_next_ready_resume` |
+| What is `kctx_asleep`? | Set while sleeping in `proc_sched`; shell (no PT) and user blockers resume via this flag |
+| Stage 3 pending? | First user dispatch still uses `proc_user_run`; not required for interactive shell |
 | When is `do_syscall` skipped for exit? | `SYS_exit` handled in `handle_sync_exception` |
 | When does Web show program output? | `SYS_write` → UART → demux `type=output` after Welcome gate |
 
@@ -249,4 +254,4 @@
 
 ---
 
-*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*
+*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*

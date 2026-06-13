@@ -1,6 +1,6 @@
 # myos — System Architecture
 
-**Scope:** RISC-V64 (`rv64gc`), QEMU `virt`, OpenSBI M→S handoff, Sv39 user isolation, NS16550 console with RX IRQ + ring buffer, cooperative `proc_sched` for user processes.
+**Scope:** RISC-V64 (`rv64gc`), QEMU `virt`, OpenSBI M→S handoff, Sv39 user isolation, NS16550 console with RX IRQ + ring buffer, xv6-style `proc_kctx_switch` scheduling (Stage 1–2), cooperative user dispatch via `proc_user_run` (Stage 3 pending).
 
 Paths refer to `code/myos/` unless noted.
 
@@ -55,7 +55,7 @@ start_kernel()                    [boot/kernel.c]
 | **Boot** | `start.S` → `start_kernel` → subsystems → `console_run` |
 | **Syscall** | User `ecall` → `trap_vector` → `trap_handler` → `do_syscall` → `sret` |
 | **User program** | Shell `./prog` → `proc_spawn_exec_wait` → `proc_user_run` → `enter_uspace` → user → `SYS_exit` → `after_uspace` → `proc_wait` |
-| **Block / wake** | Syscall → `proc_block` → `proc_sched_run_ready` + `wfi` → IRQ → `proc_wakeup` → `proc_user_run_dispatch` |
+| **Block / wake** | `proc_block` → `proc_sched` → `proc_kctx_switch` to scheduler → IRQ → `proc_wakeup` → `proc_kctx_switch` back (or fresh `proc_user_run_dispatch` for depth==0) |
 | **IPC demo** | `./ipc_echo` → fork producer/consumer → sem + shared page `@ USER_IPC_BASE` |
 | **Observability** | `LOG_*` → `printf` → UART; optional host capture / Web demux (see §8) |
 
@@ -103,7 +103,7 @@ start_kernel()                    [boot/kernel.c]
 | Module | Primary paths | Responsibility |
 |--------|---------------|----------------|
 | **Boot** | `boot/start.S`, `boot/kernel.c`, `boot/uart.c`, `boot/power.c`, `boot/osviz_k.c` | Entry, init order, UART, shutdown, structured LOG |
-| **Trap / IRQ** | `interrupt/entry.S`, `interrupt/trap.c`, `interrupt/timer.c`, `interrupt/plic.c`, `interrupt/trap_diag.c` | `trap_vector`, exceptions, timer, external IRQ |
+| **Trap / IRQ** | `interrupt/entry.S`, `interrupt/kctx_switch.S`, `interrupt/trap.c`, `interrupt/timer.c`, `interrupt/plic.c`, `interrupt/trap_diag.c` | `trap_vector`, exceptions, timer, external IRQ, xv6-style context switch |
 | **Memory** | `mem/pmm.c`, `mem/vm.c`, `mem/ipc_shm.c` | Physical pages, Sv39, shared IPC mapping |
 | **Process** | `proc/proc.c`, `proc/proc_user.c`, `proc/proc_sched.c`, `proc/syscall.c` | PCB, ELF exec, fork/wait, block/wakeup, syscalls |
 | **Sync / IPC** | `proc/sem.c`, `mem/ipc_shm.c` | Kernel semaphores, shared page for user IPC |
@@ -152,30 +152,63 @@ uart_irq_handler()          [boot/uart.c]
   • proc_wakeup(&uart_read_wq)
         │
         ▼
-Blocked reader (sys_read fd=0 → uart_readc_wait → proc_block)
+Blocked reader (shell login/shell_loop OR sys_read fd=0 → uart_readc_wait → proc_block)
         │
         ▼
-proc_sched_run_ready() → proc_user_run_dispatch(woken pid)
+proc_sched() → proc_kctx_switch(blocked, scheduler)
+        │
+        ▼
+proc_scheduler_loop() on sched_stack
+  • proc_pick_next_ready_resume() → proc_kctx_switch(scheduler, blocked)
+  • blocked returns in proc_block → reader continues
 ```
 
-Shell line editing (`uart_read_line`) and user `read(0)` both consume the same ring when `uart_rx_use_irq` is set.
+Shell and user stdin share the same ring and wait queue; the shell runs in **kernel context** (pid 1, no user pagetable) and resumes via **`kctx_asleep`**, not `proc_user_run_dispatch`.
 
 ---
 
 ## 6. User process scheduling model
 
+### 6.1 Current state (Stage 1–2 + coroutine exit path)
+
 ```text
-proc_user_run(pid)                    depth++, save run_saved_cont
+proc_user_run(pid)                    depth++, save run_saved_cont (Stage 4 target)
   └─ enter_uspace → user → syscall
-        ├─ proc_block(chan)           BLOCKED; sched others; wfi for IRQ
-        │     └─ proc_sched_run_ready()
-        │           └─ proc_user_run_dispatch(next)
-        │                 ├─ depth==0 → proc_user_run(next)
-        │                 └─ depth>0, READY → proc_user_run_resume(next)
+        ├─ proc_block(chan)           BLOCKED
+        │     └─ proc_sched()
+        │           └─ proc_kctx_switch(p→kctx, sched→kctx)   leave caller stack
+        │                 proc_scheduler_loop [sched_stack]
+        │                   ├─ proc_sched_run_ready()
+        │                   │     └─ proc_user_run_dispatch(next)   depth==0 only
+        │                   ├─ proc_pick_next_ready_resume()
+        │                   │     └─ proc_kctx_switch(sched, p→kctx)   kctx_asleep
+        │                   └─ wfi
+        │     └─ return in proc_block → syscall → user
         └─ SYS_exit → after_uspace    depth--, return to waiter
 ```
 
-**Do not** nest `proc_user_run` inside `proc_block` with a blind `proc_user_run_inflight` filter — blocked syscalls still hold `depth>0` but must be resumable after `proc_wakeup`.
+**xv6 invariant:** READY + active continuation (`depth>0` or `kctx_asleep`) must **not** get a fresh `proc_user_run()` — wakeup resumes the existing kernel path via `proc_kctx_switch`.
+
+| Mechanism | Role |
+|-----------|------|
+| `struct proc_kcontext` | Per-process `ra/sp/s0–s11` (xv6 `swtch` layout) |
+| `proc_kctx_switch` | `interrupt/kctx_switch.S` — save old, load new, `ret` |
+| `kctx_asleep` | Set in `proc_sched()`; resume picker uses it (shell + user blockers) |
+| `proc_user_run_depth` | Legacy coroutine depth; Stage 4 removal target |
+| `after_uspace` / `run_saved_cont` | Legacy exit/yield continuation; Stage 4 removal target |
+
+### 6.2 Migration stages (xv6 alignment)
+
+| Stage | Status | Description |
+|-------|--------|-------------|
+| 1 | Done | `proc_kcontext` in each PCB; shadow sync from `run_saved_*` |
+| 2 | Done | `proc_block` → `proc_sched` → scheduler stack; `kctx_asleep` resume |
+| 3 | Pending | First READY dispatch via `switch_to(kctx)`, not `proc_user_run` |
+| 4 | Pending | Remove `depth`, `run_saved_*`, `after_uspace`, `proc_user_run_unwind_blocked` |
+
+**Interactive shell:** available after Stage 2 (with `kctx_asleep` fix); Stage 3 affects **user ELF** first entry only.
+
+See [logs/0613.md](../logs/0613.md) for the 2026-06-13 change log.
 
 ---
 
@@ -269,7 +302,8 @@ Web (current):
 | [04_logging_and_osviz.md](04_logging_and_osviz.md) | LOG macros, formats, host tools |
 | [05_web_frontend.md](05_web_frontend.md) | Web stack, terminal gate, demux |
 | [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | Historical defects and fixes |
+| [logs/0613.md](../logs/0613.md) | 2026-06-13 Stage 1–2 migration log |
 
 ---
 
-*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*
+*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*

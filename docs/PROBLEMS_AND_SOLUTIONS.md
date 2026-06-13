@@ -326,19 +326,6 @@ The shell path **`proc_spawn_exec_wait` → `proc_user_run` → user execution �
 
 ---
 
-## 9. Reference Architecture Lessons (ArceOS / competition tree)
-
-These items are **design guidance**, not bugs in myos per se.
-
-| Topic | Lesson |
-|-------|--------|
-| RISC-V console on `virt` | Reference **riscv64** builds often use **SBI for console**, not MMIO 16550—**not portable** to myos’s chosen UART model. |
-| Trap framing | **`sscratch` swap** for U/S mode and **deferring IRQ unmask until after register restore** are sound patterns to emulate. |
-| U-mode bring-up | Reference uses **per-task page tables (`satp`)**, **`SUM` in `sstatus`**, and **full trap frames including `sstatus`**. myos adopted pieces incrementally ( **`SUM` once in `trap_init`**, later full Sv39). |
-| Keyboard IRQ | Even in reference **riscv64**, **PLIC UART RX** may be marked TODO—**polling stdin** remained the practical path. |
-
----
-
 ## 10. Verification and Operational Discipline
 
 | Practice | Rationale |
@@ -380,15 +367,6 @@ These items are **design guidance**, not bugs in myos per se.
 - Hold non-LOG partial lines until newline before emitting `output`.
 - Local-echo commands in **`sendCommand`** when the shell is ready.
 
----
-
-### 11.3 Misclassification of user text as LOG (avoidance)
-
-**Problem.** Fear that strings like `hi from ./hi` would route to the event panel.
-
-**Root cause analysis.** Demux only promotes lines that **start with** `LOG ` or `LOG_SNAPSHOT ` **and** parse as JSON objects. Normal program output does not match.
-
-**Note.** Lines that literally start with `LOG ` but contain invalid JSON fall back to **`output`**.
 
 ---
 
@@ -410,27 +388,49 @@ These items are **design guidance**, not bugs in myos per se.
 
 **Root cause.** Nested `proc_block` + `proc_user_run` used `if (!proc_user_run_inflight(next))` before running a woken process. A process blocked in a syscall still has **`proc_user_run_depth > 0`**, so READY pid=3 was filtered out and the CPU stayed in **`wfi`** forever.
 
+**Resolution (superseded in part by §12.3–12.4).**
+
+- Removed **`proc_user_run_resume`** — no second `enter_uspace` on wakeup.
+- Blocked processes resume through **`proc_block` → syscall return → user** after `proc_kctx_switch` back (Stage 2).
+- **`proc_user_run_dispatch`**: only **`depth==0`** fresh runs.
+
+---
+
+### 12.3 `ipc_echo quit` panic — stale `after_uspace` / wrong `saved_pid`
+
+**Problem.** Interactive `./ipc_echo`, then `q`: panic at garbage address (`LEAVE pid=4 restore=3`, page fault in kernel).
+
+**Root cause (Case A — stale continuation).** Producer (pid=3) blocked inside `proc_user_run` → syscall → `proc_block`. `current_pid` stayed 3; nested scheduling captured **`saved_pid=3`** instead of ipc_echo parent (2). On consumer exit, trap return used stale `after_uspace` with a dead stack frame.
+
 **Resolution.**
 
-- `proc_block`: call **`proc_sched_run_ready()`** + `wfi`; do not nest blind `proc_user_run`.
-- **`proc_user_run_schedulable`**: allow `depth==0` **or** `PROC_READY` after wakeup.
-- **`proc_user_run_dispatch`**: `depth==0` → fresh `proc_user_run`; `depth>0` + READY → **`proc_user_run_resume`** (re-`enter_uspace` without overwriting `run_saved_cont`).
+- **`saved_pid` correction** when blocked inflight parent exists (`run_sched_parent`).
+- **`proc_pick_next_ready`**: skip `depth>0` — never re-dispatch a process with an active continuation.
+- **`after_uspace`**: call **`proc_activate_kernel()`** before touching globals.
+- Stage 2: blocking no longer nests `proc_sched_run_ready` on the blocked frame.
 
 ---
 
-### 12.3 Confusing DEBUG flags (kernel vs shell)
+### 12.4 Stage 2 shell typing freeze — `kctx_asleep`
 
-**Problem.** Operator reports “keyboard dead” or “only LOG lines on keypress” while `make DEBUG=0`.
+**Problem.** After Stage 2 (`proc_block` → `proc_sched` → `proc_kctx_switch`), **interactive shell could not accept keyboard input** at `login:` or `root@…$`.
 
-**Root cause.** **`make DEBUG=0|1`** (kernel compile) and **`DEBUG=n|y`** in `start_qemu.sh` (host pipe) are independent. `DEBUG=y` pipes stdout to osviz and breaks interactive stdin; `make DEBUG=1` still floods serial with `LOG {...}`.
+**Root cause.** Resume picker required **`depth>0` AND pagetable**. Shell (pid 1) runs in kernel context: **no pagetable**, **`depth==0`**. UART wakeup set READY but scheduler never `swtch`ed back → permanent `wfi`.
 
-**Resolution.** Interactive demo: **`make DEBUG=0`** and **`DEBUG=n ./sh/start_qemu.sh`**. See [README.md](README.md) operator table.
+**Resolution.**
+
+- **`kctx_asleep`** flag: set in `proc_sched()` before switch, cleared on return.
+- **`proc_pick_next_ready_resume()`**: `READY && kctx_asleep && kctx.ra != 0` (covers shell and user blockers).
+- **`proc_pick_next_ready()`**: skip `kctx_asleep`.
+
+**Operator note:** Interactive typing requires **`DEBUG=n ./sh/start_qemu.sh`** on a real terminal. Stage 3 is **not** required for shell availability.
+
+See [logs/0613.md](../logs/0613.md).
 
 ---
-
 ## 13. Chronological arc (summary)
 
-Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **`proc_user_run` / `proc_wait`** required **per-process trap frames**, **kernel `gp` in the trap vector**, **`after_uspace` continuation on exit**, and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **UART RX IRQ + ring** and **`proc_sched` block/wakeup** enabled blocking `read` and **`ipc_echo`**. **`proc_user_run_dispatch`** fixed **READY starvation** after blocked syscalls. **Observability** added macro-gated **`LOG_*`** and a **LibertyOS Web UI** with **server-side serial demux**.
+Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **`proc_user_run` / `proc_wait`** required **per-process trap frames**, **kernel `gp` in the trap vector**, **`after_uspace` continuation on exit**, and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **UART RX IRQ + ring** and **`proc_sched` block/wakeup** enabled blocking `read` and **`ipc_echo`**. **`proc_user_run_dispatch`** and removal of **`proc_user_run_resume`** fixed **READY starvation** and **stale continuation panics**. **2026-06-13:** **Stage 1–2 xv6 migration** — `proc_kcontext`, **`proc_kctx_switch`**, dedicated **scheduler stack**, **`kctx_asleep`** for shell UART resume. **Observability** added macro-gated **`LOG_*`** and a **LibertyOS Web UI** with **server-side serial demux**.
 
 ---
 
@@ -441,7 +441,8 @@ Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `
 | [01_architecture.md](01_architecture.md) | Current architecture |
 | [02_call_chains.md](02_call_chains.md) | Block/wakeup call trees |
 | [README.md](README.md) | Operator quick start |
+| [logs/0613.md](../logs/0613.md) | 2026-06-13 Stage 1–2 change log |
 
 ---
 
-*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*
+*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*

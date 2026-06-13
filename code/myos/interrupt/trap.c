@@ -330,8 +330,16 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 	 * page table active (after_uspace and proc_user_exit_trap both switch to
 	 * it). sret back to user needs the current process user mappings.
 	 */
-	if (trap_return_to_user)
-		proc_activate_user(proc_current_pid());
+	if (trap_return_to_user) {
+		int apid = proc_current_pid();
+		enum proc_state st = proc_get_state(apid);
+
+		if (apid > 0 && st != PROC_ZOMBIE && st != PROC_UNUSED &&
+		    proc_pagetable(apid))
+			proc_activate_user(apid);
+		else
+			proc_activate_kernel();
+	}
 
 	/* sscratch: 0 in kernel until entry.S sets kstack top right before sret to user. */
 	trap_scratch_init(0);

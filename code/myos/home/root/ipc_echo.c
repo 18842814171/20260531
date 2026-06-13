@@ -55,7 +55,9 @@ static void producer_loop(void)
 		printf("[producer] put '%c' full=%d\n", c,
 		       sem_getval(ipc->full_sem));
 	}
+	printf("[producer] quit: sending EOF to consumer\n");
 	ipc_put((char)IPC_EOF);
+	printf("[producer] EOF sent, exiting\n");
 	exit(0);
 }
 
@@ -65,8 +67,10 @@ static void consumer_loop(void)
 
 	for (;;) {
 		c = ipc_get();
-		if (c == (char)IPC_EOF)
+		if (c == (char)IPC_EOF) {
+			printf("[consumer] got EOF, exiting\n");
 			break;
+		}
 		printf("[consumer] get '%c' empty=%d\n", c,
 		       sem_getval(ipc->empty_sem));
 		write(1, &c, 1);
@@ -114,6 +118,9 @@ int main(void)
 	printf("Type text and press Enter (q to quit):\n");
 
 	waitpid(pid_p);
+	printf("[parent] producer (pid=%d) reaped\n", pid_p);
 	waitpid(pid_c);
+	printf("[parent] consumer (pid=%d) reaped\n", pid_c);
+	printf("[parent] ipc_echo done\n");
 	return 0;
 }

@@ -1,14 +1,8 @@
-# myos / LibertyOS — Documentation Index
-
-Technical reference for the RISC-V kernel (`code/myos/`), host observability (`code/osviz/`), and the Web UI (`code/web/`). Paths are relative to the repository root unless noted.
-
----
-
 ## Core kernel
 
 | Document | Contents |
 |----------|----------|
-| [01_architecture.md](01_architecture.md) | Boot order, layers, Sv39, UART IRQ + ring, `proc_sched`, sem/IPC, Web serial flow |
+| [01_architecture.md](01_architecture.md) | Boot order, layers, Sv39, UART IRQ + ring, xv6-style `proc_kctx` / `proc_sched`, sem/IPC, Web serial flow |
 | [02_call_chains.md](02_call_chains.md) | Call trees: trap, syscall, exec, fork/wait, block/wakeup, IPC |
 | [03_module_index.md](03_module_index.md) | Per-module entry / core / exit functions |
 | [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | Historical defects, root causes, and fixes |
@@ -54,6 +48,8 @@ DEBUG=n ./sh/start_qemu.sh
 
 Login `root`, then e.g. `./ipc_echo` — type text and Enter; `q` quits producer.
 
+**Scheduling migration (2026-06-13):** Stages 1–2 of xv6-style `proc_kctx_switch` are in tree. Interactive shell works via `kctx_asleep` resume after UART block; Stage 3 is not required for login/typing. See [01_architecture.md](01_architecture.md) §6 and [logs/0613.md](../logs/0613.md).
+
 ### Web backend
 
 ```bash
@@ -65,37 +61,12 @@ See [使用方法.md](../使用方法.md) for a concise Chinese operator sheet.
 
 ---
 
-## Demo programs (user)
+## Development logs
 
-| Program | Purpose |
-|---------|---------|
-| `./hi` | Minimal write + exit |
-| `./ipc_echo` | UART → producer → sem → shared buffer → consumer → echo |
-| `./yield_demo` | `SYS_yield` smoke test |
-| `make AUTORUN=ipc_echo` | Auto-run `./ipc_echo` at boot |
-
-User sources: `code/myos/home/root/`. Rebuild user ELFs and kernel after edits (`make clean && make`).
+| Log | Contents |
+|-----|----------|
+| [logs/0613.md](../logs/0613.md) | 2026-06-13 — xv6-style `proc_kctx` Stage 1–2, shell `kctx_asleep` fix |
 
 ---
 
-## Related paths outside `docs/`
-
-| Path | Role |
-|------|------|
-| [使用方法.md](../使用方法.md) | Local commands (Chinese) |
-| [code/myos/README.md](../code/myos/README.md) | Kernel tree quick reference |
-| `log/*.md` | Session debug notes (not canonical spec) |
-| `重要现场演示项目.txt` | Demo checklist (Chinese) |
-
----
-
-## Related documents
-
-| Document | Contents |
-|----------|----------|
-| [01_architecture.md](01_architecture.md) | System structure and data flows |
-| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | Known issues and resolutions |
-
----
-
-*Last aligned with: Sv39, UART RX IRQ + ring, `proc_sched` block/wakeup + `proc_user_run_dispatch`, sem/IPC shm, Web serial demux.*
+*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*

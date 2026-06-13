@@ -187,7 +187,8 @@ trap_vector:
 	mv	sp, a0
 .Ltrap_user_save:
 	/* reg_save before any C call — trap_get_user_frame clobbers a0-a7 (syscall args). */
-	li	t0, 0x1120
+	/* Must match PROC_KSTACK_TOP_TO_UCTX in include/proc.h */
+	li	t0, 0x11a0
 	sub	t6, sp, t0
 	reg_save t6
 	STORE	t3, 30*SIZE_REG(t6)
@@ -253,7 +254,8 @@ trap_vector:
 	beqz	t5, .L_restore_kernel
 	/* Set sscratch before reg_restore (reg_restore overwrites t6). */
 	mv	t0, t6
-	li	t1, 0x1120
+	/* Must match PROC_KSTACK_TOP_TO_UCTX in include/proc.h */
+	li	t1, 0x11a0
 	add	t0, t0, t1
 	csrw	CSR_SCRATCH, t0
 	li	t1, SIE_MASK

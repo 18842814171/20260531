@@ -5,6 +5,15 @@
 
 extern reg_t kernel_gp_value;
 
+static void proc_kctx_zero(struct proc_kcontext *k)
+{
+	reg_t *words = (reg_t *)k;
+	int i, n = (int)(sizeof(*k) / sizeof(reg_t));
+
+	for (i = 0; i < n; i++)
+		words[i] = 0;
+}
+
 static struct {
 	int pid;
 	int ppid;
@@ -17,6 +26,9 @@ static struct {
 	reg_t run_saved_sp;
 	reg_t run_saved_s0;
 	reg_t run_saved_cont;
+	int run_sched_parent;
+	struct proc_kcontext kctx;
+	int kctx_asleep; /* set in proc_sched until swtch back (shell + user blockers) */
 	uint8_t kstack[PROC_KSTACK_SIZE] __attribute__((aligned(16)));
 	pagetable_t pagetable;
 } procs[PROC_MAX];
@@ -41,6 +53,9 @@ void proc_init(void)
 		procs[i].run_saved_ra = 0;
 		procs[i].run_saved_sp = 0;
 		procs[i].run_saved_cont = 0;
+		procs[i].run_sched_parent = 0;
+		proc_kctx_zero(&procs[i].kctx);
+		procs[i].kctx_asleep = 0;
 		procs[i].pagetable = NULL;
 	}
 
@@ -74,6 +89,9 @@ int proc_alloc(const char *name, int ppid)
 		procs[i].run_saved_ra = 0;
 		procs[i].run_saved_sp = 0;
 		procs[i].run_saved_cont = 0;
+		procs[i].run_sched_parent = 0;
+		proc_kctx_zero(&procs[i].kctx);
+		procs[i].kctx_asleep = 0;
 		procs[i].pagetable = NULL;
 		procs[i].name[0] = '\0';
 		if (name) {
@@ -115,11 +133,20 @@ void proc_set_state(int pid, enum proc_state st)
 
 	for (i = 0; i < PROC_MAX; i++) {
 		if (procs[i].pid == pid) {
-			if (st == PROC_UNUSED && procs[i].pagetable) {
-				printf("destroy vm pid=%d pt=%p\n",
-				       pid, (void *)procs[i].pagetable);
-				vm_destroy(procs[i].pagetable);
-				procs[i].pagetable = NULL;
+			if (st == PROC_UNUSED) {
+				procs[i].run_saved_cont = 0;
+				procs[i].run_saved_ra = 0;
+				procs[i].run_saved_sp = 0;
+				procs[i].run_saved_s0 = 0;
+				procs[i].run_sched_parent = 0;
+				proc_kctx_zero(&procs[i].kctx);
+				procs[i].kctx_asleep = 0;
+				if (procs[i].pagetable) {
+					printf("destroy vm pid=%d pt=%p\n",
+					       pid, (void *)procs[i].pagetable);
+					vm_destroy(procs[i].pagetable);
+					procs[i].pagetable = NULL;
+				}
 			}
 			procs[i].state = st;
 			return;
@@ -179,7 +206,41 @@ int proc_pick_next_ready(void)
 			continue;
 		if (!procs[slot].pagetable)
 			continue;
+		/*
+		 * READY + active continuation: wakeup target for proc_block below.
+		 * Like xv6 sleep/sched — resume the existing path, not dispatch.
+		 */
+		if (proc_user_run_inflight(procs[slot].pid))
+			continue;
+		if (procs[slot].kctx_asleep)
+			continue;
 		sched_rr = (slot + 1) % PROC_MAX;
+		return procs[slot].pid;
+	}
+	return -1;
+}
+
+static int sched_rr_resume = 1;
+
+/*
+ * READY process that slept in proc_sched (shell UART wait, user syscall block).
+ * Distinct from fresh READY user procs (proc_user_run_dispatch).
+ */
+int proc_pick_next_ready_resume(void)
+{
+	int tries, slot;
+
+	for (tries = 0; tries < PROC_MAX; tries++) {
+		slot = (sched_rr_resume + tries) % PROC_MAX;
+		if (slot == 0)
+			continue;
+		if (procs[slot].state != PROC_READY)
+			continue;
+		if (!procs[slot].kctx_asleep)
+			continue;
+		if (procs[slot].kctx.ra == 0)
+			continue;
+		sched_rr_resume = (slot + 1) % PROC_MAX;
 		return procs[slot].pid;
 	}
 	return -1;
@@ -261,6 +322,34 @@ reg_t proc_kstack_top(int pid)
 	return (reg_t)&procs[slot].kstack[PROC_KSTACK_SIZE];
 }
 
+struct proc_kcontext *proc_kctx(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return NULL;
+	return &procs[slot].kctx;
+}
+
+void proc_kctx_clear(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return;
+	proc_kctx_zero(&procs[slot].kctx);
+	procs[slot].kctx_asleep = 0;
+}
+
+void proc_kctx_set_asleep(int pid, int asleep)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return;
+	procs[slot].kctx_asleep = asleep ? 1 : 0;
+}
+
 reg_t proc_run_saved_ra(int pid)
 {
 	int slot = proc_slot_by_pid(pid);
@@ -306,6 +395,10 @@ void proc_save_run_caller(int pid, reg_t ra, reg_t sp, reg_t s0)
 	procs[slot].run_saved_ra = ra;
 	procs[slot].run_saved_sp = sp;
 	procs[slot].run_saved_s0 = s0;
+	/* Stage 1 shadow: mirror into xv6-style kctx (not used for resume yet). */
+	procs[slot].kctx.ra = ra;
+	procs[slot].kctx.sp = sp;
+	procs[slot].kctx.s0 = s0;
 }
 
 void proc_save_run_cont(int pid, reg_t cont)
@@ -315,6 +408,25 @@ void proc_save_run_cont(int pid, reg_t cont)
 	if (slot < 0)
 		return;
 	procs[slot].run_saved_cont = cont;
+	procs[slot].kctx.ra = cont;
+}
+
+void proc_set_run_sched_parent(int pid, int parent_pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return;
+	procs[slot].run_sched_parent = parent_pid;
+}
+
+int proc_run_sched_parent(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return -1;
+	return procs[slot].run_sched_parent;
 }
 
 struct proc_gdb_snap proc_gdb_last;
