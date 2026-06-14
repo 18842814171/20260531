@@ -60,15 +60,19 @@ user: ecall                     (a7 = syscall number)
 
 ---
 
-## 4. Syscall: `exit` → return to shell waiter
+## 4. Syscall: `exit` → scheduler → waiter
 
 ```text
 user: SYS_exit (93), status in a0
  └─ proc_user_exit_trap
      ├─ proc_user_exit → proc_mark_zombie → proc_sched_child_exit
-     ├─ proc_prepare_kernel_return(cxt, pid)
-     └─ sret → after_uspace in proc_user_run
-         └─ proc_wait / proc_spawn_exec_wait → shell prompt
+     ├─ proc_prepare_kernel_return(cxt, pid)   pc = proc_user_trap_return
+     └─ sret → proc_user_trap_return
+         ├─ proc_activate_kernel(); trap_scratch_init(0)
+         ├─ proc_set_current_pid(run_sched_parent)
+         └─ proc_kctx_switch(child→kctx, sched→kctx)
+               proc_scheduler_loop continues
+               parent unblocks in proc_wait → shell prompt
 ```
 
 ---
@@ -78,10 +82,15 @@ user: SYS_exit (93), status in a0
 ```text
 shell_loop                      usr/console.c
  └─ proc_spawn_exec_wait(path)  proc/proc_user.c
-     ├─ proc_alloc / proc_load_elf
-     ├─ proc_user_run(child)
-     │   └─ proc_enter_uspace → enter_uspace → user main
+     ├─ proc_alloc / proc_load_elf → PROC_READY
      └─ proc_wait(PROC_SHELL_PID, child)
+           └─ proc_block(child_wait_chan)   sleep until zombie
+
+(proc_scheduler_loop picks READY child in parallel:)
+ proc_sched_dispatch_one(child)
+   ├─ proc_kctx_bootstrap_fresh → kctx.ra = proc_user_first_run
+   └─ proc_kctx_switch(sched→kctx, child→kctx)
+         proc_user_first_run → proc_enter_uspace → enter_uspace → user main
 ```
 
 ---
@@ -107,13 +116,13 @@ user: SYS_fork (214)
 
 user: SYS_waitpid (260)
  └─ sys_waitpid → proc_wait
-     ├─ proc_sched_run_ready()     run ready children
-     └─ proc_block(child_wait_chan) parent waits for zombie
+     └─ loop: check zombie → proc_block(child_wait_chan)   sleep-only (xv6-style)
+           (scheduler runs other READY children via proc_sched_dispatch_one)
 ```
 
 ---
 
-## 8. Block, wakeup, and resume (Stage 2 — xv6-style)
+## 8. Block, wakeup, and resume (xv6-style)
 
 ```text
 proc_block(chan)                proc/proc_sched.c
@@ -123,8 +132,7 @@ proc_block(chan)                proc/proc_sched.c
            ├─ proc_kctx_set_asleep(pid, 1)
            └─ proc_kctx_switch(p→kctx, sched→kctx)
                  proc_scheduler_loop()     [sched_stack, proc/proc_sched.c]
-                   ├─ proc_sched_run_ready()
-                   │     └─ proc_user_run_dispatch(next)   depth==0 only
+                   ├─ proc_sched_dispatch_one()   fresh READY (not in_uspace, not asleep)
                    ├─ proc_pick_next_ready_resume()
                    │     └─ proc_kctx_switch(sched, p→kctx)   kctx_asleep
                    └─ wfi
@@ -207,8 +215,8 @@ See [05_web_frontend.md](05_web_frontend.md).
 | 93 | SYS_exit | `proc_user_exit_trap` (not `do_syscall` retval) |
 | 172 | SYS_getpid | `proc_current_pid` |
 | 214 | SYS_fork | `sys_fork` |
-| 221 | SYS_execve | `proc_load_elf` + `proc_user_run` |
-| 247 | SYS_yield | `proc_user_yield_trap` |
+| 221 | SYS_execve | `proc_load_elf` + re-enter via `enter_uspace` |
+| 247 | SYS_yield | `proc_user_yield_trap` → `proc_user_trap_return` |
 | 260 | SYS_waitpid | `proc_wait` |
 | 1024 | SYS_open | `sys_open` → `fs_open` |
 | 1025 | SYS_close | `sys_close` |
@@ -233,4 +241,4 @@ Definitions: `include/syscall.h`.
 
 ---
 
-*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*
+*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*

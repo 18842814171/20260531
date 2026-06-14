@@ -25,7 +25,6 @@ static struct {
 	reg_t run_saved_ra;
 	reg_t run_saved_sp;
 	reg_t run_saved_s0;
-	reg_t run_saved_cont;
 	int run_sched_parent;
 	struct proc_kcontext kctx;
 	int kctx_asleep; /* set in proc_sched until swtch back (shell + user blockers) */
@@ -52,7 +51,7 @@ void proc_init(void)
 		procs[i].task_idx = -1;
 		procs[i].run_saved_ra = 0;
 		procs[i].run_saved_sp = 0;
-		procs[i].run_saved_cont = 0;
+		procs[i].run_saved_s0 = 0;
 		procs[i].run_sched_parent = 0;
 		proc_kctx_zero(&procs[i].kctx);
 		procs[i].kctx_asleep = 0;
@@ -88,7 +87,7 @@ int proc_alloc(const char *name, int ppid)
 		procs[i].task_idx = -1;
 		procs[i].run_saved_ra = 0;
 		procs[i].run_saved_sp = 0;
-		procs[i].run_saved_cont = 0;
+		procs[i].run_saved_s0 = 0;
 		procs[i].run_sched_parent = 0;
 		proc_kctx_zero(&procs[i].kctx);
 		procs[i].kctx_asleep = 0;
@@ -134,13 +133,13 @@ void proc_set_state(int pid, enum proc_state st)
 	for (i = 0; i < PROC_MAX; i++) {
 		if (procs[i].pid == pid) {
 			if (st == PROC_UNUSED) {
-				procs[i].run_saved_cont = 0;
 				procs[i].run_saved_ra = 0;
 				procs[i].run_saved_sp = 0;
 				procs[i].run_saved_s0 = 0;
 				procs[i].run_sched_parent = 0;
 				proc_kctx_zero(&procs[i].kctx);
 				procs[i].kctx_asleep = 0;
+				proc_user_diag_reset(pid);
 				if (procs[i].pagetable) {
 					printf("destroy vm pid=%d pt=%p\n",
 					       pid, (void *)procs[i].pagetable);
@@ -210,7 +209,7 @@ int proc_pick_next_ready(void)
 		 * READY + active continuation: wakeup target for proc_block below.
 		 * Like xv6 sleep/sched — resume the existing path, not dispatch.
 		 */
-		if (proc_user_run_inflight(procs[slot].pid))
+		if (proc_user_in_uspace(procs[slot].pid))
 			continue;
 		if (procs[slot].kctx_asleep)
 			continue;
@@ -224,7 +223,7 @@ static int sched_rr_resume = 1;
 
 /*
  * READY process that slept in proc_sched (shell UART wait, user syscall block).
- * Distinct from fresh READY user procs (proc_user_run_dispatch).
+ * Distinct from fresh READY user procs (proc_sched_dispatch_one).
  */
 int proc_pick_next_ready_resume(void)
 {
@@ -341,6 +340,18 @@ void proc_kctx_clear(int pid)
 	procs[slot].kctx_asleep = 0;
 }
 
+void proc_kctx_bootstrap_fresh(int pid)
+{
+	struct proc_kcontext *k = proc_kctx(pid);
+	reg_t top = proc_kstack_top(pid);
+
+	if (!k || !top)
+		return;
+	proc_kctx_zero(k);
+	k->ra = (reg_t)proc_user_first_run;
+	k->sp = top - 16;
+}
+
 void proc_kctx_set_asleep(int pid, int asleep)
 {
 	int slot = proc_slot_by_pid(pid);
@@ -348,6 +359,15 @@ void proc_kctx_set_asleep(int pid, int asleep)
 	if (slot < 0)
 		return;
 	procs[slot].kctx_asleep = asleep ? 1 : 0;
+}
+
+int proc_kctx_asleep(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return 0;
+	return procs[slot].kctx_asleep;
 }
 
 reg_t proc_run_saved_ra(int pid)
@@ -377,15 +397,6 @@ reg_t proc_run_saved_s0(int pid)
 	return procs[slot].run_saved_s0;
 }
 
-reg_t proc_run_saved_cont(int pid)
-{
-	int slot = proc_slot_by_pid(pid);
-
-	if (slot < 0)
-		return 0;
-	return procs[slot].run_saved_cont;
-}
-
 void proc_save_run_caller(int pid, reg_t ra, reg_t sp, reg_t s0)
 {
 	int slot = proc_slot_by_pid(pid);
@@ -395,20 +406,6 @@ void proc_save_run_caller(int pid, reg_t ra, reg_t sp, reg_t s0)
 	procs[slot].run_saved_ra = ra;
 	procs[slot].run_saved_sp = sp;
 	procs[slot].run_saved_s0 = s0;
-	/* Stage 1 shadow: mirror into xv6-style kctx (not used for resume yet). */
-	procs[slot].kctx.ra = ra;
-	procs[slot].kctx.sp = sp;
-	procs[slot].kctx.s0 = s0;
-}
-
-void proc_save_run_cont(int pid, reg_t cont)
-{
-	int slot = proc_slot_by_pid(pid);
-
-	if (slot < 0)
-		return;
-	procs[slot].run_saved_cont = cont;
-	procs[slot].kctx.ra = cont;
 }
 
 void proc_set_run_sched_parent(int pid, int parent_pid)
@@ -439,7 +436,7 @@ void proc_gdb_checkpoint(int phase, int pid, struct context *cxt)
 	proc_gdb_last.pid = pid;
 	proc_gdb_last.state = (slot >= 0) ? (int)procs[slot].state : -1;
 	proc_gdb_last.cur_pid = proc_current_pid();
-	proc_gdb_last.saved_cont = proc_run_saved_cont(pid);
+	proc_gdb_last.trap_ret_pc = (reg_t)proc_user_trap_return;
 	proc_gdb_last.saved_ra = proc_run_saved_ra(pid);
 	proc_gdb_last.cxt_pc = cxt ? cxt->pc : 0;
 	proc_gdb_last.cxt_ra = cxt ? cxt->ra : 0;
@@ -448,16 +445,13 @@ void proc_gdb_checkpoint(int phase, int pid, struct context *cxt)
 
 void proc_prepare_kernel_return(struct context *cxt, int pid)
 {
-	reg_t cont = proc_run_saved_cont(pid);
 	reg_t ra = proc_run_saved_ra(pid);
 	reg_t sp = proc_run_saved_sp(pid);
 	reg_t s0 = proc_run_saved_s0(pid);
-	reg_t pc;
 
 	if (!cxt || !ra)
 		panic("proc_prepare_kernel_return: no saved caller");
-	pc = cont ? cont : ra;
-	cxt->pc = pc;
+	cxt->pc = (reg_t)proc_user_trap_return;
 	cxt->sp = sp;
 	cxt->ra = ra;
 	cxt->gp = kernel_gp_value;

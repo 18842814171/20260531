@@ -46,15 +46,32 @@ static void sched_ctx_init_once(void)
 	sched_ctx_ready = 1;
 }
 
+static int sched_dispatch_parent(int pid)
+{
+	int parent = proc_current_pid();
+
+	if (parent > 0 && proc_user_in_uspace(parent) &&
+	    proc_get_state(parent) == PROC_BLOCKED)
+		parent = proc_run_sched_parent(parent);
+	return parent;
+}
+
 /*
  * xv6 scheduler loop: runs on sched_stack, not on any blocked process frame.
- * Fresh READY (depth==0) still use proc_user_run_dispatch (Stage 3 replaces that).
- * Woken blockers (depth>0) resume via proc_kctx_switch into proc_sched().
+ * Fresh READY procs: proc_kctx_bootstrap_fresh + proc_user_first_run via kctx.
+ * Woken blockers resume via proc_kctx_switch into proc_sched().
  */
 static void proc_scheduler_loop(void)
 {
 	for (;;) {
-		proc_sched_run_ready();
+		int next;
+
+		for (;;) {
+			next = proc_pick_next_ready();
+			if (next <= 0)
+				break;
+			(void)proc_sched_dispatch_one(next);
+		}
 
 		for (;;) {
 			int pid = proc_pick_next_ready_resume();
@@ -159,19 +176,54 @@ void proc_block(void *chan)
 	LOG_SCHED("unblock", buf);
 }
 
+struct proc_kcontext *proc_sched_kctx(void)
+{
+	sched_ctx_init_once();
+	return &sched_kctx;
+}
+
+int proc_sched_dispatch_one(int pid)
+{
+	int parent;
+	char buf[64];
+	struct proc_kcontext *k;
+	struct proc_kcontext *sched;
+
+	if (proc_slot_by_pid(pid) < 0)
+		return -1;
+	if (proc_get_state(pid) != PROC_READY)
+		return -1;
+	if (!proc_pagetable(pid))
+		return -1;
+	if (proc_kctx_asleep(pid))
+		return -1;
+
+	parent = sched_dispatch_parent(pid);
+	proc_set_run_sched_parent(pid, parent);
+
+	k = proc_kctx(pid);
+	sched = proc_sched_kctx();
+	if (!k || !sched)
+		return -1;
+	proc_kctx_bootstrap_fresh(pid);
+	snprintf(buf, sizeof(buf), "\"pid\":%d,\"via\":\"kctx\"", pid);
+	LOG_SCHED("run", buf);
+	proc_set_state(pid, PROC_RUNNING);
+	proc_set_current_pid(pid);
+	proc_kctx_switch(sched, k);
+	proc_set_current_pid(parent);
+	return 0;
+}
+
 void proc_sched_run_ready(void)
 {
 	int next;
-	char buf[64];
 
-	/* Only depth==0 processes (no active continuation) reach dispatch. */
 	for (;;) {
 		next = proc_pick_next_ready();
 		if (next <= 0)
 			return;
-		snprintf(buf, sizeof(buf), "\"pid\":%d", next);
-		LOG_SCHED("run", buf);
-		(void)proc_user_run_dispatch(next);
+		(void)proc_sched_dispatch_one(next);
 	}
 }
 

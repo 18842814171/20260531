@@ -206,8 +206,8 @@ void trap_diag_trap_return(reg_t sepc, struct context *frame)
 	if (!TRAP_DIAG_VERBOSE)
 		return;
 
-	if (!epc_in_user(sepc) && sepc != proc_run_saved_ra(proc_current_pid())
-	    && sepc != proc_run_saved_cont(proc_current_pid()))
+	if (!epc_in_user(sepc) && sepc != (reg_t)proc_user_trap_return
+	    && sepc != proc_run_saved_ra(proc_current_pid()))
 		return;
 
 	snprintf(d, sizeof(d),

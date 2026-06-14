@@ -56,52 +56,43 @@ static void spawn_bg_trampoline(void)
 
 	if (pid <= 0)
 		return;
-	proc_user_run(pid);
 	proc_wait(PROC_SHELL_PID, pid);
 	spawn_bg_pid = -1;
 }
 static int current_pid = PROC_SHELL_PID;
-static int proc_user_run_depth[PROC_MAX];
+static int proc_user_active[PROC_MAX];
+static int proc_user_first_run_enter_count[PROC_MAX];
 
-/*
- * xv6-style invariant: depth>0 means proc_user_run() owns the only continuation
- * (enter_uspace not returned). Wakeup resumes via proc_block → syscall → user;
- * the scheduler must never call proc_user_run() again for that pid.
- */
-int proc_user_run_inflight(int pid)
+void proc_user_diag_reset(int pid)
+{
+	int slot = proc_slot_by_pid(pid);
+
+	if (slot < 0)
+		return;
+	proc_user_first_run_enter_count[slot] = 0;
+	proc_user_active[slot] = 0;
+}
+
+int proc_user_first_run_enter_count_get(int pid)
 {
 	int slot = proc_slot_by_pid(pid);
 
 	if (slot < 0)
 		return 0;
-	return proc_user_run_depth[slot] > 0;
-}
-
-int proc_user_run_schedulable(int pid)
-{
-	return !proc_user_run_inflight(pid);
-}
-
-int proc_user_run_dispatch(int pid)
-{
-	if (!proc_user_run_schedulable(pid))
-		return -1;
-	return proc_user_run(pid);
+	return proc_user_first_run_enter_count[slot];
 }
 
 /*
- * When blocked_pid waits inside proc_user_run() → syscall → proc_block(), it
- * never reached after_uspace, so current_pid still equals blocked_pid. Nested
- * proc_user_run(other) must capture the outer sched parent (ipc_echo=2), not
- * the blocked reader (producer=3).
+ * Set during proc_user_first_run until proc_user_trap_return switch_back.
+ * Prevents fresh dispatch while READY+yield is unwinding through trap_ret.
  */
-int proc_user_run_sched_baseline(int blocked_pid)
+int proc_user_in_uspace(int pid)
 {
-	int slot = proc_slot_by_pid(blocked_pid);
+	int slot = proc_slot_by_pid(pid);
 
-	if (slot < 0 || proc_user_run_depth[slot] == 0)
-		return blocked_pid;
-	return proc_run_sched_parent(blocked_pid);
+	if (slot < 0)
+		return 0;
+	return proc_user_active[slot] > 0;
 }
 
 extern struct context kernel_trap_cxt;
@@ -350,100 +341,83 @@ int proc_load_elf(int pid, const char *path)
 	return 0;
 }
 
-int proc_user_run(int pid)
+void proc_user_first_run(void)
 {
 	struct context *uc;
 	reg_t ktop;
 	reg_t saved_ra, saved_sp, saved_s0;
-	int saved_pid;
+	int pid;
 	int slot;
 
 	asm volatile("mv %0, ra" : "=r"(saved_ra));
 	asm volatile("mv %0, sp" : "=r"(saved_sp));
 	asm volatile("mv %0, s0" : "=r"(saved_s0));
 
-	saved_pid = current_pid;
-	if (saved_pid > 0 && proc_user_run_inflight(saved_pid) &&
-	    proc_get_state(saved_pid) == PROC_BLOCKED)
-		saved_pid = proc_run_sched_parent(saved_pid);
-	printf("ENTER proc_user_run pid=%d current=%d\n", pid, current_pid);
+	pid = proc_current_pid();
 	slot = pid_to_slot(pid);
+	if (slot >= 0)
+		proc_user_first_run_enter_count[slot]++;
+	printf("ENTER proc_user_first_run pid=%d enter#%d\n", pid,
+	       slot >= 0 ? proc_user_first_run_enter_count[slot] : 0);
 	if (slot < 0)
-		return -1;
-	if (proc_user_run_depth[slot] > 0)
-		return -1;
+		goto switch_back;
 
 	uc = proc_user_ctx(pid);
 	ktop = proc_kstack_top(pid);
-	if (!uc || !ktop)
-		return -1;
-	if (!proc_pagetable(pid))
-		return -1;
+	if (!uc || !ktop || !proc_pagetable(pid))
+		goto switch_back;
 
 	proc_save_run_caller(pid, saved_ra, saved_sp, saved_s0);
-	proc_set_run_sched_parent(pid, saved_pid);
-
 	proc_set_state(pid, PROC_RUNNING);
-	proc_save_run_cont(pid, (reg_t)&&after_uspace);
-	proc_user_run_depth[slot]++;
+	proc_user_active[slot] = 1;
 	proc_activate_user(pid);
 	proc_enter_uspace(pid, uc, ktop);
-after_uspace:
-	/*
-	 * Must run with kernel satp before touching procs[]/globals. If satp still
-	 * points at a freed user PT, the next insn fetch can land in PTE garbage
-	 * (sepc ~= 0x...80358xxx) instead of this label.
-	 */
-	proc_activate_kernel();
-	trap_scratch_init(0);
-	printf("LEAVE pid=%d restore=%d state=%d satp=0x%lx\n",
-	       pid, saved_pid, (int)proc_get_state(pid),
-	       (unsigned long)r_satp());
-	proc_user_run_depth[slot]--;
-	proc_gdb_checkpoint(1, pid, uc);
-	if (proc_get_state(pid) == PROC_READY) {
-		if (slot >= 0)
-			uctx_copy(uc, &yield_saved[slot]);
-		current_pid = saved_pid;
-		return PROC_USER_RUN_YIELD;
+	/* enter_uspace sret; exit/yield/fault resume at proc_user_trap_return */
+switch_back:
+	{
+		struct proc_kcontext *sched = proc_sched_kctx();
+		struct proc_kcontext *k = proc_kctx(pid);
+
+		if (sched && k)
+			proc_kctx_switch(k, sched);
 	}
-	if (proc_get_state(pid) == PROC_BLOCKED) {
-		current_pid = saved_pid;
-		return PROC_USER_RUN_BLOCKED;
-	}
-	current_pid = saved_pid;
-	return 0;
 }
 
-void proc_user_run_unwind_blocked(int pid)
+void proc_user_trap_return(void)
 {
+	int pid = proc_current_pid();
 	int slot = pid_to_slot(pid);
-	reg_t sp, s0, cont;
-
-	if (slot < 0 || proc_user_run_depth[slot] == 0)
-		panic("proc_user_run_unwind_blocked: not in proc_user_run");
-
-	cont = proc_run_saved_cont(pid);
-	sp = proc_run_saved_sp(pid);
-	s0 = proc_run_saved_s0(pid);
-	if (!cont || !sp)
-		panic("proc_user_run_unwind_blocked: no saved frame");
+	int saved_pid;
+	struct context *uc;
+	struct proc_kcontext *sched;
+	struct proc_kcontext *k;
 
 	proc_activate_kernel();
 	trap_scratch_init(0);
 
-	asm volatile(
-		"mv sp, %0\n"
-		"mv s0, %1\n"
-		"jr %2\n"
-		: : "r"(sp), "r"(s0), "r"(cont) : "memory");
+	if (slot >= 0) {
+		saved_pid = proc_run_sched_parent(pid);
+		uc = proc_user_ctx(pid);
+		printf("LEAVE trap_ret pid=%d restore=%d state=%d satp=0x%lx\n",
+		       pid, saved_pid, (int)proc_get_state(pid),
+		       (unsigned long)r_satp());
+		proc_user_active[slot] = 0;
+		proc_gdb_checkpoint(1, pid, uc);
+		if (proc_get_state(pid) == PROC_READY)
+			uctx_copy(uc, &yield_saved[slot]);
+		proc_set_current_pid(saved_pid);
+	}
+
+	sched = proc_sched_kctx();
+	k = proc_kctx(pid);
+	if (sched && k)
+		proc_kctx_switch(k, sched);
 }
 
 reg_t proc_user_yield_trap(struct context *cxt)
 {
 	int pid = proc_current_pid();
 	int slot = pid_to_slot(pid);
-	reg_t cont, ret;
 
 	if (pid <= 0)
 		return cxt->pc;
@@ -455,11 +429,7 @@ reg_t proc_user_yield_trap(struct context *cxt)
 	proc_activate_kernel();
 	proc_set_state(pid, PROC_READY);
 	proc_prepare_kernel_return(cxt, pid);
-	cont = proc_run_saved_cont(pid);
-	ret = cont ? cont : proc_run_saved_ra(pid);
-	if (!ret || (ret >= USER_MEM_BASE && ret < USER_MEM_END))
-		panic("proc_user_yield_trap: bad kernel return");
-	return ret;
+	return (reg_t)proc_user_trap_return;
 }
 
 void proc_user_exit(int pid, int status)
@@ -477,7 +447,6 @@ void proc_user_exit(int pid, int status)
 reg_t proc_user_exit_trap(struct context *cxt)
 {
 	int pid = proc_current_pid();
-	reg_t cont, ret;
 	unsigned int status;
 
 	if (pid <= 0)
@@ -491,22 +460,15 @@ reg_t proc_user_exit_trap(struct context *cxt)
 	       pid, (int)status, (void *)cxt->pc, (void *)cxt->ra);
 	proc_user_exit(pid, (int)status);
 	proc_prepare_kernel_return(cxt, pid);
-	cont = proc_run_saved_cont(pid);
-	ret = cont ? cont : proc_run_saved_ra(pid);
-	printf("[exit_trap] pid=%d cont=0x%lx satp=0x%lx cur=%d\n",
-	       pid, (unsigned long)cont, (unsigned long)r_satp(),
-	       proc_current_pid());
-	if (!cont)
-		panic("proc_user_exit_trap: run_saved_cont cleared (nested proc_user_run?)");
-	if (!ret || (ret >= USER_MEM_BASE && ret < USER_MEM_END))
-		panic("proc_user_exit_trap: bad kernel return");
-	return ret;
+	printf("[exit_trap] pid=%d trap_ret=0x%lx satp=0x%lx cur=%d\n",
+	       pid, (unsigned long)proc_user_trap_return,
+	       (unsigned long)r_satp(), proc_current_pid());
+	return (reg_t)proc_user_trap_return;
 }
 
 reg_t proc_user_fault_trap(struct context *cxt)
 {
 	int pid = proc_current_pid();
-	reg_t cont, ret;
 
 	if (pid <= 0)
 		return 0;
@@ -516,11 +478,7 @@ reg_t proc_user_fault_trap(struct context *cxt)
 	       pid, (void *)cxt->pc, (void *)cxt->ra);
 	proc_user_exit(pid, PROC_FAULT_EXIT);
 	proc_prepare_kernel_return(cxt, pid);
-	cont = proc_run_saved_cont(pid);
-	ret = cont ? cont : proc_run_saved_ra(pid);
-	if (!ret || (ret >= USER_MEM_BASE && ret < USER_MEM_END))
-		panic("proc_user_fault_trap: bad kernel return");
-	return ret;
+	return (reg_t)proc_user_trap_return;
 }
 
 int proc_fork(int parent_pid)
@@ -568,27 +526,6 @@ int proc_wait(int parent_pid, int child_pid)
 		return -1;
 
 	for (;;) {
-		n = proc_list(list, PROC_MAX);
-		for (i = 0; i < n; i++) {
-			if (list[i].pid != child_pid)
-				continue;
-			if (list[i].state == PROC_ZOMBIE) {
-				int slot = pid_to_slot(child_pid);
-				int st = 0;
-
-				if (slot >= 0)
-					st = exit_status[slot];
-				proc_activate_kernel();
-				proc_set_state(child_pid, PROC_UNUSED);
-				return st;
-			}
-			break;
-		}
-		if (i >= n)
-			return -1;
-
-		proc_sched_run_ready();
-
 		n = proc_list(list, PROC_MAX);
 		for (i = 0; i < n; i++) {
 			if (list[i].pid != child_pid)

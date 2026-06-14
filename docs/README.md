@@ -48,7 +48,7 @@ DEBUG=n ./sh/start_qemu.sh
 
 Login `root`, then e.g. `./ipc_echo` — type text and Enter; `q` quits producer.
 
-**Scheduling migration (2026-06-13):** Stages 1–2 of xv6-style `proc_kctx_switch` are in tree. Interactive shell works via `kctx_asleep` resume after UART block; Stage 3 is not required for login/typing. See [01_architecture.md](01_architecture.md) §6 and [logs/0613.md](../logs/0613.md).
+**Scheduling (2026-06-14):** User-process dispatch now uses xv6-style context switching (Stages 1–4 complete). See [01_architecture.md](01_architecture.md) §6 and [log/0614debug.md](../log/0614debug.md).
 
 ### Web backend
 
@@ -65,8 +65,10 @@ See [使用方法.md](../使用方法.md) for a concise Chinese operator sheet.
 
 | Log | Contents |
 |-----|----------|
-| [logs/0613.md](../logs/0613.md) | 2026-06-13 — xv6-style `proc_kctx` Stage 1–2, shell `kctx_asleep` fix |
+| [log/0613.md](../log/0613.md) | 2026-06-13 — xv6-style `proc_kctx` Stage 1–2, shell `kctx_asleep` fix |
+| [log/0614debug.md](../log/0614debug.md) | 2026-06-14 — Stage 3–4 收尾、文档同步、原则 9 检查 |
+| [6.14.txt](../6.14.txt) | 2026-06-14 — Stage 3–4 completion notes (scheduler-only dispatch) |
 
 ---
 
-*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*
+*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*

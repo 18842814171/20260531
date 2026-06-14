@@ -1,6 +1,6 @@
 # myos — System Architecture
 
-**Scope:** RISC-V64 (`rv64gc`), QEMU `virt`, OpenSBI M→S handoff, Sv39 user isolation, NS16550 console with RX IRQ + ring buffer, xv6-style `proc_kctx_switch` scheduling (Stage 1–2), cooperative user dispatch via `proc_user_run` (Stage 3 pending).
+**Scope:** RISC-V64 (`rv64gc`), QEMU `virt`, OpenSBI M→S handoff, Sv39 user isolation, NS16550 console with RX IRQ + ring buffer, xv6-style `proc_kctx_switch` scheduling (Stages 1–4 complete).
 
 Paths refer to `code/myos/` unless noted.
 
@@ -54,8 +54,8 @@ start_kernel()                    [boot/kernel.c]
 |------|---------|
 | **Boot** | `start.S` → `start_kernel` → subsystems → `console_run` |
 | **Syscall** | User `ecall` → `trap_vector` → `trap_handler` → `do_syscall` → `sret` |
-| **User program** | Shell `./prog` → `proc_spawn_exec_wait` → `proc_user_run` → `enter_uspace` → user → `SYS_exit` → `after_uspace` → `proc_wait` |
-| **Block / wake** | `proc_block` → `proc_sched` → `proc_kctx_switch` to scheduler → IRQ → `proc_wakeup` → `proc_kctx_switch` back (or fresh `proc_user_run_dispatch` for depth==0) |
+| **User program** | Shell `./prog` → `proc_spawn_exec_wait` → `proc_load_elf` (READY) → scheduler `proc_sched_dispatch_one` → `proc_user_first_run` → `enter_uspace` → user → `SYS_exit` → `proc_user_trap_return` → `proc_wait` |
+| **Block / wake** | `proc_block` → `proc_sched` → `proc_kctx_switch` to scheduler → IRQ → `proc_wakeup` → `proc_kctx_switch` back (fresh READY uses `proc_sched_dispatch_one` only) |
 | **IPC demo** | `./ipc_echo` → fork producer/consumer → sem + shared page `@ USER_IPC_BASE` |
 | **Observability** | `LOG_*` → `printf` → UART; optional host capture / Web demux (see §8) |
 
@@ -133,8 +133,8 @@ start_kernel()                    [boot/kernel.c]
 ```
 
 - **Shell** runs in the kernel (logical PID `PROC_SHELL_PID` = 1); it does not have a user page table until it spawns a child.
-- **Child processes** get `vm_create()` on `proc_load_elf`, `vm_activate()` in `proc_user_run`, restored to `vm_kernel_pt()` at `after_uspace`.
-- **Return to user after nested kernel work** (e.g. `waitpid` running child): `trap_handler` calls `proc_activate_user` when `trap_return_to_user` is set so the parent page table is active before `sret`.
+- **Child processes** get `vm_create()` on `proc_load_elf`, `vm_activate()` in `proc_user_first_run`, restored to `vm_kernel_pt()` in `proc_user_trap_return`.
+- **Return to user after nested kernel work** (e.g. parent syscall after `proc_block`): `trap_handler` calls `proc_activate_user` when `trap_return_to_user` is set so the parent page table is active before `sret`.
 
 ---
 
@@ -163,52 +163,59 @@ proc_scheduler_loop() on sched_stack
   • blocked returns in proc_block → reader continues
 ```
 
-Shell and user stdin share the same ring and wait queue; the shell runs in **kernel context** (pid 1, no user pagetable) and resumes via **`kctx_asleep`**, not `proc_user_run_dispatch`.
+Shell and user stdin share the same ring and wait queue; the shell runs in **kernel context** (pid 1, no user pagetable) and resumes via **`kctx_asleep`**, not fresh dispatch.
 
 ---
 
 ## 6. User process scheduling model
 
-### 6.1 Current state (Stage 1–2 + coroutine exit path)
+### 6.1 Current state (xv6-style, Stages 1–4)
 
 ```text
-proc_user_run(pid)                    depth++, save run_saved_cont (Stage 4 target)
-  └─ enter_uspace → user → syscall
-        ├─ proc_block(chan)           BLOCKED
-        │     └─ proc_sched()
-        │           └─ proc_kctx_switch(p→kctx, sched→kctx)   leave caller stack
-        │                 proc_scheduler_loop [sched_stack]
-        │                   ├─ proc_sched_run_ready()
-        │                   │     └─ proc_user_run_dispatch(next)   depth==0 only
-        │                   ├─ proc_pick_next_ready_resume()
-        │                   │     └─ proc_kctx_switch(sched, p→kctx)   kctx_asleep
-        │                   └─ wfi
-        │     └─ return in proc_block → syscall → user
-        └─ SYS_exit → after_uspace    depth--, return to waiter
+proc_sched_dispatch_one(pid)          scheduler-owned sched_kctx
+  └─ proc_kctx_bootstrap_fresh(pid)   kctx.ra = proc_user_first_run
+  └─ proc_kctx_switch(sched→kctx, child→kctx)
+        proc_user_first_run()
+          └─ enter_uspace → user → syscall
+                ├─ proc_block(chan)           BLOCKED
+                │     └─ proc_sched()
+                │           └─ proc_kctx_switch(p→kctx, sched→kctx)
+                │                 proc_scheduler_loop [sched_stack]
+                │                   ├─ proc_sched_dispatch_one()   fresh READY only
+                │                   ├─ proc_pick_next_ready_resume()
+                │                   │     └─ proc_kctx_switch(sched, p→kctx)   kctx_asleep
+                │                   └─ wfi
+                │     └─ return in proc_block → syscall → user
+                └─ SYS_exit / yield / fault
+                      └─ proc_prepare_kernel_return → proc_user_trap_return
+                            └─ proc_kctx_switch(child→kctx, sched→kctx)
 ```
 
-**xv6 invariant:** READY + active continuation (`depth>0` or `kctx_asleep`) must **not** get a fresh `proc_user_run()` — wakeup resumes the existing kernel path via `proc_kctx_switch`.
+**xv6 invariant:** READY + active session (`proc_user_in_uspace` or `kctx_asleep`) must **not** get a fresh `proc_sched_dispatch_one` — blockers resume via `proc_kctx_switch` into `proc_sched()`.
 
 | Mechanism | Role |
 |-----------|------|
 | `struct proc_kcontext` | Per-process `ra/sp/s0–s11` (xv6 `swtch` layout) |
 | `proc_kctx_switch` | `interrupt/kctx_switch.S` — save old, load new, `ret` |
+| `sched_kctx` + `sched_stack` | Dedicated scheduler context (not any process frame) |
+| `proc_user_first_run` | First entry after fresh dispatch; calls `enter_uspace` |
+| `proc_user_trap_return` | Exit/yield/fault kernel return; `proc_kctx_switch` back to scheduler |
+| `run_saved_ra/sp/s0` | Trapframe stack restore for `proc_prepare_kernel_return` only |
+| `proc_user_in_uspace` | Guards fresh dispatch while yield/exit unwinds through trap_ret |
 | `kctx_asleep` | Set in `proc_sched()`; resume picker uses it (shell + user blockers) |
-| `proc_user_run_depth` | Legacy coroutine depth; Stage 4 removal target |
-| `after_uspace` / `run_saved_cont` | Legacy exit/yield continuation; Stage 4 removal target |
 
 ### 6.2 Migration stages (xv6 alignment)
 
 | Stage | Status | Description |
 |-------|--------|-------------|
-| 1 | Done | `proc_kcontext` in each PCB; shadow sync from `run_saved_*` |
+| 1 | Done | `proc_kcontext` in each PCB |
 | 2 | Done | `proc_block` → `proc_sched` → scheduler stack; `kctx_asleep` resume |
-| 3 | Pending | First READY dispatch via `switch_to(kctx)`, not `proc_user_run` |
-| 4 | Pending | Remove `depth`, `run_saved_*`, `after_uspace`, `proc_user_run_unwind_blocked` |
+| 3 | Done | Fresh READY via `proc_kctx_switch(sched_kctx, child_kctx)`, not coroutine dispatch |
+| 4 | Done | Removed `proc_user_run`, `after_uspace`, `run_saved_cont`, `depth`, longjmp dispatch |
 
-**Interactive shell:** available after Stage 2 (with `kctx_asleep` fix); Stage 3 affects **user ELF** first entry only.
+**Removed (2026-06-14):** `proc_user_run`, `proc_user_run_dispatch`, `proc_user_run_unwind_blocked`, `dispatch_longjmp`, `dispatch_ret`, C-label continuations (`&&after_uspace`).
 
-See [logs/0613.md](../logs/0613.md) for the 2026-06-13 change log.
+See [log/0613.md](../log/0613.md) for the 2026-06-13 change log; planning notes in [6.14.txt](../6.14.txt).
 
 ---
 
@@ -227,8 +234,9 @@ User trap entry (sscratch != 0):
 Return to user:
   reg_restore → set sscratch = kstack_top → optional SIE → sret
 
-Return to kernel after SYS_exit:
-  set SPP → sret to after_uspace (continuation in proc_user_run)
+Return to kernel after SYS_exit / yield / fault:
+  set SPP → sret to proc_user_trap_return (via trapframe pc)
+  → proc_kctx_switch back to scheduler
 ```
 
 ---
@@ -245,10 +253,10 @@ Host keyboard
         ├─ Built-in command → fs_* / proc_* / vm_info_* (kernel)
         │
         └─ ./ipc_echo  → proc_spawn_exec_wait
-                    → proc_load_elf (fs_read_file + vm_map)
-                    → proc_user_run → enter_uspace
+                    → proc_load_elf (fs_read_file + vm_map) → PROC_READY
+                    → scheduler picks child → proc_user_first_run → enter_uspace
                     → fork + sem + shm → producer/consumer
-                    → SYS_exit → proc_wait → prompt
+                    → SYS_exit → proc_user_trap_return → proc_wait → prompt
 ```
 
 ---
@@ -302,8 +310,9 @@ Web (current):
 | [04_logging_and_osviz.md](04_logging_and_osviz.md) | LOG macros, formats, host tools |
 | [05_web_frontend.md](05_web_frontend.md) | Web stack, terminal gate, demux |
 | [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | Historical defects and fixes |
-| [logs/0613.md](../logs/0613.md) | 2026-06-13 Stage 1–2 migration log |
+| [log/0613.md](../log/0613.md) | 2026-06-13 Stage 1–2 migration log |
+| [log/0614debug.md](../log/0614debug.md) | 2026-06-14 Stage 3–4 收尾与文档同步 |
 
 ---
 
-*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*
+*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*

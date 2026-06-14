@@ -157,7 +157,8 @@ until "Welcome, root." appears
 | LOG lines in terminal | Old server without demux | Restart `start_server.sh` |
 | JSON half-lines in UI | Partial flush bug | Update `SerialDemux` (hold until `\n`) |
 | Keyboard ignored in QEMU direct | `DEBUG=y` pipes stdout to osviz | Use **`DEBUG=n ./sh/start_qemu.sh`** on a real terminal |
-| Shell frozen at `login:` (post–Stage 2) | Scheduler did not resume pid 1 after UART block | Fixed via **`kctx_asleep`** (2026-06-13); rebuild kernel |
+| Shell frozen at `login:` | Scheduler did not resume pid 1 after UART block | Fixed via **`kctx_asleep`** (2026-06-13); rebuild kernel |
+| `ipc_echo` panic on interactive `q` | Stale coroutine dispatch / wrong sched parent | Fixed via scheduler-only kctx dispatch (2026-06-14); rebuild kernel |
 | Input ignored | WebSocket down | Status dot / reconnect |
 
 ---
@@ -169,8 +170,9 @@ until "Welcome, root." appears
 | [04_logging_and_osviz.md](04_logging_and_osviz.md) | LOG format, host tools |
 | [01_architecture.md](01_architecture.md) | §9 Web data flow |
 | [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §11 Web issues; §12 scheduling |
-| [logs/0613.md](../logs/0613.md) | 2026-06-13 Stage 1–2 log |
+| [log/0613.md](../log/0613.md) | 2026-06-13 Stage 1–2 log |
+| [6.14.txt](../6.14.txt) | 2026-06-14 Stage 3–4 completion |
 
 ---
 
-*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*
+*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*

@@ -326,8 +326,8 @@ reg_t trap_handler(reg_t epc, reg_t cause, struct context *cxt)
 		trap_reenable_irq = 1;
 
 	/*
-	 * Syscall paths such as waitpid → proc_user_run(child) leave the kernel
-	 * page table active (after_uspace and proc_user_exit_trap both switch to
+	 * Syscall paths leave the kernel page table active (proc_user_trap_return
+	 * and proc_user_exit_trap both switch to it). sret back to user needs
 	 * it). sret back to user needs the current process user mappings.
 	 */
 	if (trap_return_to_user) {

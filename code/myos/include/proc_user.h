@@ -27,30 +27,26 @@ void proc_activate_user(int pid);
 void proc_activate_kernel(void);
 
 int proc_load_elf(int pid, const char *path);
-/* 0 = exited, 1 = yielded, 2 = blocked (resume via waitpid loop), -1 = error */
-#define PROC_USER_RUN_YIELD    1
-#define PROC_USER_RUN_BLOCKED  2
 
-int proc_user_run(int pid);
-int proc_user_run_inflight(int pid);
-/* false when pid owns an active proc_user_run continuation (depth>0) */
-int proc_user_run_schedulable(int pid);
-int proc_user_run_dispatch(int pid);
-/* current_pid to use while running other processes from proc_block(). */
-int proc_user_run_sched_baseline(int blocked_pid);
-void proc_user_run_unwind_blocked(int pid);
+void proc_user_first_run(void);
+void proc_user_trap_return(void);
+int proc_user_first_run_enter_count_get(int pid);
+void proc_user_diag_reset(int pid);
+/* true while first_run session active (yield/exit trap not yet switch_back) */
+int proc_user_in_uspace(int pid);
 reg_t proc_user_yield_trap(struct context *cxt);
 void proc_user_exit(int pid, int status);
 
-/* Handle SYS_exit: mark zombie and return kernel continuation (never user). */
+/* Handle SYS_exit: mark zombie and return kernel trap_ret (never user). */
 reg_t proc_user_exit_trap(struct context *cxt);
 
-/* Unhandled user page fault: kill process, return to proc_user_run caller. */
+/* Unhandled user page fault: kill process, return to proc_user_trap_return. */
 reg_t proc_user_fault_trap(struct context *cxt);
 
 int proc_fork(int parent_pid);
 int proc_wait(int parent_pid, int child_pid);
 int proc_spawn_exec_wait(const char *path);
 int proc_spawn_exec_bg(const char *path);
+int prog_is_elf_path(const char *path);
 
 #endif /* __PROC_USER_H__ */

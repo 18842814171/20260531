@@ -166,7 +166,7 @@ Before **fork/exec/wait**, the shell executed ELF binaries by saving a **shell c
 
 ## 5. Process Model, User Mode Entry, and Exit Return
 
-The shell path **`proc_spawn_exec_wait` → `proc_user_run` → user execution → `SYS_exit` → `proc_wait`** replaced cooperative `prog_exec`.
+The shell path **`proc_spawn_exec_wait` → scheduler dispatch → user execution → `SYS_exit` → `proc_wait`** replaced cooperative `prog_exec`. **Current (2026-06-14):** `proc_load_elf` sets READY; **`proc_sched_dispatch_one`** runs **`proc_user_first_run`**; exit returns via **`proc_user_trap_return`**. Historical sections below describe earlier coroutine-based paths.
 
 ### 5.1 Wrong trap frame and corrupted `sepc` on first user fault
 
@@ -214,7 +214,9 @@ The shell path **`proc_spawn_exec_wait` → `proc_user_run` → user execution �
 
 **Root cause.** **`SYS_exit` resumed at `proc_run_saved_ra` (inside `proc_spawn_exec_wait`)** while **`sp`/`s0` still reflected `proc_user_run`**. The CPU executed **frame A’s stack with frame B’s return address**—classic **stack/frame mismatch**.
 
-**Resolution.** Save **`run_saved_cont` = address of label `after_uspace`**. On exit, set **`pc` (via `sepc` path) to that continuation**, restore **`sp`/`s0`/`ra`/`gp` for `proc_user_run`**, run **`trap_scratch_init(0)`**, reset **`current_pid` to shell**, **`return 0`**, then let **`proc_spawn_exec_wait` call `proc_wait` normally**.
+**Resolution (historical).** Save **`run_saved_cont` = address of label `after_uspace`**. On exit, set **`pc` (via `sepc` path) to that continuation**, restore **`sp`/`s0`/`ra`/`gp`**, run **`trap_scratch_init(0)`**, reset **`current_pid`**, then return to waiter.
+
+**Superseded (2026-06-14):** Continuation is now **`proc_user_trap_return`** (real function, not C label). `proc_prepare_kernel_return` sets trapframe `pc` to that entry; **`run_saved_cont` removed**. See §12.5.
 
 ---
 
@@ -372,13 +374,15 @@ The shell path **`proc_spawn_exec_wait` → `proc_user_run` → user execution �
 
 ## 12. User process scheduling (`proc_sched`)
 
-### 12.1 False early exit via `proc_user_run_unwind_blocked`
+*Sections 12.1–12.4 document historical defects during coroutine-era scheduling. Current model: [01_architecture.md](01_architecture.md) §6.*
+
+### 12.1 False early exit via `proc_user_run_unwind_blocked` *(removed 2026-06-14)*
 
 **Problem.** Running `./ipc_echo` (or `AUTORUN=ipc_echo`) destroyed pid=2 page tables before `main` reached sem create; `vm_destroy` panicked on corrupt PTEs.
 
 **Root cause.** `proc_block()` called `proc_user_run_unwind_blocked()`, which **`jr`’d to `after_uspace`** without a normal trap return. User/kernel context (satp, stack, `run_saved_cont`) was inconsistent; the parent appeared to exit while still inside `waitpid`.
 
-**Resolution.** Do **not** unwind from `proc_block`. Return blocked processes through the normal **`proc_user_run` → BLOCKED → scheduler** path. See [01_architecture.md](01_architecture.md) §6.
+**Resolution.** Do **not** unwind from `proc_block`. Return blocked processes through **`proc_block` → `proc_sched` → `proc_kctx_switch`** (Stage 2+). **`proc_user_run_unwind_blocked` deleted** in Stage 4.
 
 ---
 
@@ -423,14 +427,33 @@ The shell path **`proc_spawn_exec_wait` → `proc_user_run` → user execution �
 - **`proc_pick_next_ready_resume()`**: `READY && kctx_asleep && kctx.ra != 0` (covers shell and user blockers).
 - **`proc_pick_next_ready()`**: skip `kctx_asleep`.
 
-**Operator note:** Interactive typing requires **`DEBUG=n ./sh/start_qemu.sh`** on a real terminal. Stage 3 is **not** required for shell availability.
+**Operator note:** Interactive typing requires **`DEBUG=n ./sh/start_qemu.sh`** on a real terminal.
 
-See [logs/0613.md](../logs/0613.md).
+See [log/0613.md](../log/0613.md).
 
 ---
+
+### 12.5 Stage 3–4 — scheduler-only dispatch and trap return *(2026-06-14)*
+
+**Problem.** Three continuation mechanisms coexisted: C coroutine (`proc_user_run` / `after_uspace`), kctx switch (block/wake), and longjmp dispatch (`sched_dispatch_jmp` / `dispatch_ret`). Interactive **`ipc_echo`** failed on TTY while piped tests passed: producer blocked on UART → scheduler dispatched consumer from unstable longjmp frame → panic on parent return.
+
+**Resolution.**
+
+- **Fresh READY:** `proc_sched_dispatch_one` → `proc_kctx_switch(sched_kctx, child_kctx)` → `proc_user_first_run` → `enter_uspace` (no `proc_user_run`, no longjmp).
+- **Exit/yield/fault:** `proc_prepare_kernel_return` → **`proc_user_trap_return`** → `proc_kctx_switch` back to scheduler (no `after_uspace` label).
+- **`proc_wait`:** sleep-only loop (`proc_block`); scheduler runs other READY children — no nested dispatch on waiter frame.
+- **Removed:** `proc_user_run`, `run_saved_cont`, `proc_user_run_depth`, longjmp dispatch stack, `dispatch_longjmp` / `dispatch_ret` PCB fields.
+- **`proc_user_in_uspace`:** replaces depth guard for yield unwind; **`proc_pick_next_ready`** skips `in_uspace` and `kctx_asleep`.
+
+**Verified:** TTY interactive `ipc_echo`; piped `AUTORUN=ipc_echo`; `PROC_KSTACK_TOP_TO_UCTX` updated to `0x11a0` after PCB shrink.
+
+See [6.14.txt](../6.14.txt) and [01_architecture.md](01_architecture.md) §6.
+
+---
+
 ## 13. Chronological arc (summary)
 
-Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **`proc_user_run` / `proc_wait`** required **per-process trap frames**, **kernel `gp` in the trap vector**, **`after_uspace` continuation on exit**, and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **UART RX IRQ + ring** and **`proc_sched` block/wakeup** enabled blocking `read` and **`ipc_echo`**. **`proc_user_run_dispatch`** and removal of **`proc_user_run_resume`** fixed **READY starvation** and **stale continuation panics**. **2026-06-13:** **Stage 1–2 xv6 migration** — `proc_kcontext`, **`proc_kctx_switch`**, dedicated **scheduler stack**, **`kctx_asleep`** for shell UART resume. **Observability** added macro-gated **`LOG_*`** and a **LibertyOS Web UI** with **server-side serial demux**.
+Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **per-process trap frames** and **`proc_wait`** required **kernel `gp` in the trap vector** and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **UART RX IRQ + ring** and **`proc_sched` block/wakeup** enabled blocking `read` and **`ipc_echo`**. Coroutine-era **`proc_user_run` / `after_uspace`** fixed early exit stack mismatches but caused **READY starvation** and **stale continuation panics** until **`proc_kctx_switch`** and **`kctx_asleep`**. **2026-06-13:** **Stage 1–2** — `proc_kcontext`, dedicated **scheduler stack**, shell UART resume. **2026-06-14:** **Stages 3–4** — scheduler-only fresh dispatch, **`proc_user_trap_return`**, removal of coroutine/longjmp paths; TTY + piped **`ipc_echo`** verified. **Observability:** macro-gated **`LOG_*`** and **LibertyOS Web UI** with **server-side serial demux**.
 
 ---
 
@@ -441,8 +464,9 @@ Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `
 | [01_architecture.md](01_architecture.md) | Current architecture |
 | [02_call_chains.md](02_call_chains.md) | Block/wakeup call trees |
 | [README.md](README.md) | Operator quick start |
-| [logs/0613.md](../logs/0613.md) | 2026-06-13 Stage 1–2 change log |
+| [log/0613.md](../log/0613.md) | 2026-06-13 Stage 1–2 change log |
+| [6.14.txt](../6.14.txt) | 2026-06-14 Stage 3–4 completion notes |
 
 ---
 
-*Last aligned with: xv6-style `proc_kctx` (Stage 1–2), `proc_kctx_switch` block-wakeup, `kctx_asleep` shell fix, AUTORUN `ipc_echo`.*
+*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*

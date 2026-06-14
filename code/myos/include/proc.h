@@ -70,28 +70,28 @@ reg_t proc_kstack_top(int pid);
 
 struct proc_kcontext *proc_kctx(int pid);
 void proc_kctx_clear(int pid);
+void proc_kctx_bootstrap_fresh(int pid);
 void proc_kctx_switch(struct proc_kcontext *old, struct proc_kcontext *new);
 void proc_kctx_set_asleep(int pid, int asleep);
+int  proc_kctx_asleep(int pid);
 
 int proc_pick_next_ready_resume(void);
 
 reg_t proc_run_saved_ra(int pid);
 reg_t proc_run_saved_sp(int pid);
 reg_t proc_run_saved_s0(int pid);
-reg_t proc_run_saved_cont(int pid);
 void proc_save_run_caller(int pid, reg_t ra, reg_t sp, reg_t s0);
-void proc_save_run_cont(int pid, reg_t cont);
 void proc_set_run_sched_parent(int pid, int parent_pid);
 int  proc_run_sched_parent(int pid);
 void proc_prepare_kernel_return(struct context *cxt, int pid);
 
-/* GDB: phase 0 = before sret to kernel cont; phase 1 = landed at after_uspace */
+/* GDB: phase 0 = before sret to trap_ret; phase 1 = landed at proc_user_trap_return */
 struct proc_gdb_snap {
 	int phase;
 	int pid;
 	int state;
 	int cur_pid;
-	reg_t saved_cont;
+	reg_t trap_ret_pc;
 	reg_t saved_ra;
 	reg_t cxt_pc;
 	reg_t cxt_ra;
