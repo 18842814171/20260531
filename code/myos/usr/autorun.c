@@ -15,10 +15,6 @@ void debug_autorun_user_and_exit(const char *prog)
 		machine_poweroff();
 	}
 
-	console_puts("autorun: ./");
-	console_puts((char *)prog);
-	console_putc('\n');
-
 	fs_chdir("/home/root");
 	st = proc_spawn_exec_wait(prog);
 	printf("autorun: done status=%d\n", st);

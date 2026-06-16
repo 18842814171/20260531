@@ -95,9 +95,9 @@ static void default_check(void)
 {
 	struct Page *p;
 
-	printf("pmm check: nr_free=%d\n", (int)nr_free);
+	boot_printf("pmm check: nr_free=%d\n", (int)nr_free);
 	p = default_alloc_pages(2);
-	printf("pmm check: alloc 2 -> %p\n", page2kva(p));
+	boot_printf("pmm check: alloc 2 -> %p\n", page2kva(p));
 	if (p)
 		default_free_pages(p, 2);
 }

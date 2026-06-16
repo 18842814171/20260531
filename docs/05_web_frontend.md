@@ -115,6 +115,8 @@ If a log line still reaches `type=output`, the client strips `LOG {"ts_ms"…}` 
 - Card templates for trap, boot, proc, pmm, etc.
 - Newest events at bottom; auto-scroll when near bottom; upward scroll pauses follow
 - Max 500 events retained
+- **Serial reveal queue (2026-06-16):** one bubble animates at a time; next starts after CSS transition (`REVEAL_GAP_MS` 50ms; fallback 100ms) — avoids out-of-order display during trap bursts
+- **`QUIET_MODULES`:** `pmm` events are dropped from the main panel (still on serial / optional jsonl); kernel no longer emits per alloc/free `LOG_PMM`
 
 ---
 
@@ -143,6 +145,8 @@ If a log line still reaches `type=output`, the client strips `LOG {"ts_ms"…}` 
 | Background script stuck in sleep | Poll only on timer | Rebuild kernel; or `kill 2` in shell |
 | Cannot start second `sh … &` | One bg script limit | `kill` or `jobs` then retry |
 | Bubble list won't scroll up | CSS flex-end bug (fixed) | Hard refresh |
+| Trap bubbles appear out of order | Independent random delays (fixed) | Hard refresh; see serial reveal queue |
+| PMM alloc/free floods panel | High-frequency LOG (fixed) | Kernel + `QUIET_MODULES`; hard refresh |
 
 ---
 
@@ -156,4 +160,4 @@ If a log line still reaches `type=output`, the client strips `LOG {"ts_ms"…}` 
 
 ---
 
-*Last aligned with: console/log channel demux, terminal splitter, raw vi input, bg script poll (2026-06-15).*
+*Last aligned with: event reveal queue, QUIET_MODULES, batch run_batch.sh (2026-06-16).*

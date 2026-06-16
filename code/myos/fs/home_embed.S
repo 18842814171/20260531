@@ -6,6 +6,10 @@
 home_bin_exec_hi:
     .incbin "../home/root/exec_hi"
 
+.globl home_bin_file_create
+home_bin_file_create:
+    .incbin "../home/root/file_create"
+
 .globl home_bin_file_rw
 home_bin_file_rw:
     .incbin "../home/root/file_rw"
@@ -13,6 +17,14 @@ home_bin_file_rw:
 .globl home_bin_fork_demo
 home_bin_fork_demo:
     .incbin "../home/root/fork_demo"
+
+.globl home_bin_fork_wait
+home_bin_fork_wait:
+    .incbin "../home/root/fork_wait"
+
+.globl home_bin_getpid_test
+home_bin_getpid_test:
+    .incbin "../home/root/getpid_test"
 
 .globl home_bin_hi
 home_bin_hi:
@@ -34,6 +46,22 @@ home_bin_return0:
 home_bin_segfault_null:
     .incbin "../home/root/segfault_null"
 
+.globl home_bin_sem_test
+home_bin_sem_test:
+    .incbin "../home/root/sem_test"
+
+.globl home_bin_test
+home_bin_test:
+    .incbin "../home/root/test"
+
+.globl home_bin_write_test
+home_bin_write_test:
+    .incbin "../home/root/write_test"
+
 .globl home_bin_yield_demo
 home_bin_yield_demo:
     .incbin "../home/root/yield_demo"
+
+.globl home_bin_yield_once
+home_bin_yield_once:
+    .incbin "../home/root/yield_once"

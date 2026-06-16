@@ -11,8 +11,21 @@
 | Kind | Functions / symbols |
 |------|---------------------|
 | **Entry** | `_start` (`boot/start.S`) → `start_kernel` (`boot/kernel.c`) |
-| **Core** | Subsystem init calls, `LOG_*` boot milestones |
+| **Core** | Subsystem init; `boot_printf` for heap/vm/trap banner (`config.h`); `LOG_*` milestones |
 | **Exit** | `console_run` or `debug_autorun_user_and_exit`; does not return to `start.S` |
+
+---
+
+## Config (`include/config.h`)
+
+**Role:** Compile-time switches for structured logs vs human boot/proc traces.
+
+| Macro | When enabled |
+|-------|--------------|
+| `LOG_*` | `DEBUG=1` / `CONFIG_LOG=1` |
+| `boot_printf` | `DEBUG=1` and no `CONFIG_AUTORUN` |
+| `proc_printf` | same as `boot_printf` |
+| `debug_autorun_user_and_exit` | `make AUTORUN=<prog>` |
 
 ---
 
@@ -235,13 +248,28 @@
 
 ## AUTORUN (development)
 
-**Role:** Non-interactive smoke test of one user program.
+**Role:** Non-interactive smoke or batch test of one user program at boot.
 
 | Kind | Functions / symbols |
 |------|---------------------|
 | **Entry** | `debug_autorun_user_and_exit(CONFIG_AUTORUN)` (`usr/autorun.c`) |
 | **Core** | `proc_spawn_exec_wait(prog)` then `machine_poweroff` |
+| **Batch** | `AUTORUN=test` → `home/root/test.c` reads `testcases.list`, prints `BATCH_SUMMARY` |
+| **Host judge** | `tests/judge_batch.py`; runner `sh/run_batch.sh` |
 | **Exit** | Does not return |
+
+---
+
+## Batch testing (operator)
+
+| Path | Role |
+|------|------|
+| `home/root/test.c` | Guest driver: fork/exec/wait per list entry |
+| `home/root/testcases.list` | Case names; `!` prefix skips |
+| `sh/run_batch.sh` | QEMU + `out/batch.log` + judge (no `make`) |
+| `tests/judge_batch.py` | Parse markers and exit codes |
+
+Build: `make AUTORUN=test DEBUG=0` then `./sh/run_batch.sh`.
 
 ---
 
@@ -257,6 +285,8 @@
 | When is `do_syscall` skipped for exit? | `SYS_exit` handled in `handle_sync_exception` |
 | When does Web show program output? | `console_write` → UART → demux `channel=console` after Welcome gate |
 | How to stop a background script? | `kill` or `kill <pid>`; `jobs` shows status |
+| How to run batch regression? | `make AUTORUN=test DEBUG=0` then `./sh/run_batch.sh` |
+| Why is serial quiet during batch? | `CONFIG_AUTORUN` disables `boot_printf`/`proc_printf`; `DEBUG=0` disables `LOG_*` |
 
 ---
 
@@ -272,4 +302,4 @@
 
 ---
 
-*Last aligned with: console/log write split, bg script, Web channel demux (2026-06-15).*
+*Last aligned with: config.h console gates, batch testing, Web channel demux (2026-06-16).*

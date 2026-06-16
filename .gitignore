@@ -5,3 +5,5 @@ T202510003995291-2331/
 xv6-riscv-riscv/
 __pycache__/
 .venv/
+testsuits-for-oskernel/
+testsuits-for-oskernel-pre-2025/

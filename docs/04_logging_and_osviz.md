@@ -31,12 +31,17 @@ A future in-guest ring buffer or second chardev is **not** implemented yet.
 Header: `code/myos/include/osviz_k.h`  
 Implementation: `code/myos/boot/osviz_k.c` (events via `log_puts`)
 
-### Build switch
+### Build switches (`config.h`)
 
-| Command | Preprocessor | Runtime effect |
-|---------|--------------|----------------|
-| `make` | `DEBUG=1`, `CONFIG_LOG=1` | `LOG_*` call `osviz_event()` |
-| `make DEBUG=0` | `DEBUG=0`, `CONFIG_LOG=0` | All `LOG_*` expand to `((void)0)` |
+| Command | `LOG_*` | `boot_printf` | `proc_printf` |
+|---------|---------|---------------|---------------|
+| `make` | on | on | on |
+| `make DEBUG=0` | off | off | off |
+| `make AUTORUN=…` | follows DEBUG | off | off |
+
+**Note:** `#define DEBUG` inside a user program (e.g. `test.c`) does **not** affect kernel macros — guest and kernel are separate builds.
+
+Human boot traces (`HEAP_START`, `trap_init`, …) use **`boot_printf`**. Process dispatch traces (`ENTER proc_user_first_run`, `[exit]`, …) use **`proc_printf`**. Both are independent of `LOG_*`.
 
 ### Macro reference
 
@@ -74,6 +79,16 @@ Fields:
 | `event` | Event name within module |
 | `hart` | `mhartid` |
 | `data` | Optional JSON object (inline, not nested string) |
+
+### PMM event policy (2026-06-16)
+
+| Event | Kernel `LOG_PMM` | Web event panel |
+|-------|------------------|-----------------|
+| `pmm/init` | yes | hidden (`QUIET_MODULES`) |
+| `pmm/alloc_fail` | yes | hidden |
+| per alloc/free | **removed** | — |
+
+---
 
 ### Trap diagnostics
 
@@ -134,11 +149,12 @@ Runtime capture directory when using `serial_reader.py`. See `events/README.md`.
 
 | Practice | Rationale |
 |----------|-----------|
-| `make DEBUG=0` for quiet serial benchmarks | Zero `LOG_*` overhead at call sites |
+| `make DEBUG=0` for quiet serial benchmarks | Zero `LOG_*` and boot/proc printf overhead |
+| `make AUTORUN=test DEBUG=0` for batch | Quiet console + no LOG; see `sh/run_batch.sh` |
 | Do not expect file logs from Web alone | Demux does not write `events.jsonl` yet (planned P2) |
 | Parse only **complete** `LOG` / `LOG_SNAPSHOT` lines | Avoid split JSON on the wire |
 | Interleaved bytes (`cLOG {…}`) | Host demux scans for markers mid-stream, not only line start |
-| Boot `printf` (e.g. `HEAP_START`) is **not** LOG | Still appears in Web terminal `output` |
+| Boot `HEAP_START` etc. use `boot_printf`, not LOG | Suppressed when `DEBUG=0` or `AUTORUN`; otherwise in Web terminal |
 | `LOG_SCHED` with `"via":"kctx"` | Fresh dispatch or resume after `proc_kctx_switch` |
 
 ---
@@ -152,8 +168,8 @@ Runtime capture directory when using `serial_reader.py`. See `events/README.md`.
 | [05_web_frontend.md](05_web_frontend.md) | SerialDemux and UI |
 | [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §11 Web demux / terminal gate |
 | [log/0613.md](../log/0613.md) | Stage 1–2 scheduling migration log |
-| [6.14.txt](../6.14.txt) | Stage 3–4 completion notes |
+| [log/0616.md](../log/0616.md) | Batch pipeline, console gates, PMM quiet |
 
 ---
 
-*Last aligned with: console/log write split (2026-06-15); Web channel demux; bg script timer poll; shell `kill`/`jobs`.*
+*Last aligned with: boot/proc printf gates, batch testing, PMM quiet, Web channel demux (2026-06-16).*

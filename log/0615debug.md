@@ -1,6 +1,6 @@
-# 0615 调试与功能变更记录
+# 0615–0616 调试与功能变更记录
 
-本文记录 6 月 15 日前后一轮网页终端、观测分流、后台脚本与界面交互改动。叙述采用书面语；涉及模块名、文件名处为便于对照保留原文。
+本文记录 6 月 15–16 日网页终端、观测分流、后台脚本、事件面板与 PMM 降噪等改动。叙述采用书面语；涉及模块名、文件名处为便于对照保留原文。
 
 ---
 
@@ -116,6 +116,14 @@ WebSocket 消息增加 `channel` 字段，与消息类型配合：
 
 文件预览与终端之间增加 `#console-splitter` 拖拽条；高度写入 `localStorage`；双击恢复默认（`desktop.html`、`desktop.js`、`global.css`）。
 
+### 5.5 事件气泡顺序与 PMM 降噪（6.16 增补）
+
+**气泡入场：** 原先每条事件独立随机延迟 100–500ms，突发 trap 时后到的可能先出现。现改为串行队列：上一条 CSS 过渡结束后再挂载下一条；间隔由 `REVEAL_GAP_MS`（当前 50ms）控制，`REVEAL_FALLBACK_MS`（100ms）防止 `transitionend` 丢失时队列卡死。列表仍为旧在上、新在下，贴底滚动逻辑不变。
+
+**PMM 不进主面板：** `module=pmm` 的 alloc/free 在跑 `./hi` 等程序时会成批出现，挤占 500 条上限。前端 `QUIET_MODULES` 跳过 pmm（串口与 events.jsonl 仍保留）。内核侧同步去掉每次 `alloc_pages` / `free_pages` 的 `LOG_PMM`，仅保留 `pmm/init` 与 `pmm/alloc_fail`。
+
+修改文件：`code/web/js/logs.js`、`code/myos/mem/pmm.c`。
+
 ---
 
 ## 六、文档同步
@@ -145,6 +153,7 @@ WebSocket 消息增加 `channel` 字段，与消息类型配合：
 
 - `boot/printf.c`, `boot/osviz_k.c`, `boot/uart.c`, `boot/kernel.c`, `boot/power.c`
 - `interrupt/timer.c`
+- `mem/pmm.c`（6.16：去掉 alloc/free 观测）
 - `proc/syscall.c`, `proc/proc_user.c`
 - `usr/console.c`, `usr/script.c`, `usr/vi.c`
 - `usr/autorun.c`, `usr/user.c`
@@ -168,6 +177,8 @@ WebSocket 消息增加 `channel` 字段，与消息类型配合：
 2. 内核后台脚本同时仅允许一个；与用户态 `fork` 后台程序机制不同。
 3. 网页 vi 需在出现「交互模式」提示后，**焦点保持在输入框**内逐键操作；`:wq` 为四个键，不必再按 Enter。
 4. `log_write` 重定向至独立主机通道（原则中的第三步）尚未实现，仅留扩展点。
+5. pmm 事件不在右侧主面板显示；若需内存专项视图，可另加折叠区或汇总卡片（未做）。
+6. 6.15–6.16 改动均在本地工作区，尚未 commit / push。
 
 ---
 
@@ -193,8 +204,13 @@ WebSocket 消息增加 `channel` 字段，与消息类型配合：
 5. 终端高度
    - 拖动预览与终端之间的分隔条；刷新后高度应保持
 
-6. 文档
+6. 事件面板（6.16）
+   - 执行 ./hi：trap/proc 气泡按顺序从底部逐条出现；不应刷 pmm alloc/free
+   - 串口或录制的 events.jsonl 中仍可有 pmm/init；alloc_fail 仅在分配失败时
+
+7. 文档与状态摘要
    - 对照 docs/05_web_frontend.md、docs/04_logging_and_osviz.md
+   - 仓库根目录 6.16.txt 为当前系统状态一览
 ```
 
 ---
@@ -210,5 +226,7 @@ WebSocket 消息增加 `channel` 字段，与消息类型配合：
 
 ---
 
-*记录日期：2026-06-15*  
+*记录日期：2026-06-15（6.16 增补 §5.5、§八–§九）*  
+*后续记录：`log/0616.md`（批跑、控制台分级、§5.5 详述）*  
+*状态摘要：仓库根目录 `6.16.txt`*  
 *记录原则：说明性文字尽量书面化；必要处保留路径与命令以便复现。*

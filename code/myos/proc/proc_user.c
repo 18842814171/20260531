@@ -357,7 +357,7 @@ void proc_user_first_run(void)
 	slot = pid_to_slot(pid);
 	if (slot >= 0)
 		proc_user_first_run_enter_count[slot]++;
-	printf("ENTER proc_user_first_run pid=%d enter#%d\n", pid,
+	proc_printf("ENTER proc_user_first_run pid=%d enter#%d\n", pid,
 	       slot >= 0 ? proc_user_first_run_enter_count[slot] : 0);
 	if (slot < 0)
 		goto switch_back;
@@ -398,7 +398,7 @@ void proc_user_trap_return(void)
 	if (slot >= 0) {
 		saved_pid = proc_run_sched_parent(pid);
 		uc = proc_user_ctx(pid);
-		printf("LEAVE trap_ret pid=%d restore=%d state=%d satp=0x%lx\n",
+		proc_printf("LEAVE trap_ret pid=%d restore=%d state=%d satp=0x%lx\n",
 		       pid, saved_pid, (int)proc_get_state(pid),
 		       (unsigned long)r_satp());
 		proc_user_active[slot] = 0;
@@ -456,11 +456,11 @@ reg_t proc_user_exit_trap(struct context *cxt)
 	status = (unsigned int)cxt->a0;
 	if (status > 255)
 		status = 0;
-	printf("[exit] pid=%d status=%d epc=%p ra=%p\n",
+	proc_printf("[exit] pid=%d status=%d epc=%p ra=%p\n",
 	       pid, (int)status, (void *)cxt->pc, (void *)cxt->ra);
 	proc_user_exit(pid, (int)status);
 	proc_prepare_kernel_return(cxt, pid);
-	printf("[exit_trap] pid=%d trap_ret=0x%lx satp=0x%lx cur=%d\n",
+	proc_printf("[exit_trap] pid=%d trap_ret=0x%lx satp=0x%lx cur=%d\n",
 	       pid, (unsigned long)proc_user_trap_return,
 	       (unsigned long)r_satp(), proc_current_pid());
 	return (reg_t)proc_user_trap_return;
@@ -474,7 +474,7 @@ reg_t proc_user_fault_trap(struct context *cxt)
 		return 0;
 
 	proc_activate_kernel();
-	printf("[exit] pid=%d status=fault epc=%p ra=%p\n",
+	proc_printf("[exit] pid=%d status=fault epc=%p ra=%p\n",
 	       pid, (void *)cxt->pc, (void *)cxt->ra);
 	proc_user_exit(pid, PROC_FAULT_EXIT);
 	proc_prepare_kernel_return(cxt, pid);

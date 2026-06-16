@@ -1,0 +1,18 @@
+# Stable batch list — fast, non-interactive, deterministic (edit to add cases).
+# Heavy or manual demos: prefix with ! (still in home/root, not run here).
+#
+return0
+hi
+write_test
+getpid_test
+file_rw
+file_create
+fork_wait
+yield_once
+sem_test
+exec_hi
+!fork_demo
+!pagefault
+!yield_demo
+!ipc_echo
+!segfault_null

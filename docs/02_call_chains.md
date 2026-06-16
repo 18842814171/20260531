@@ -212,6 +212,31 @@ Only one kernel background script at a time. `sleep N` in a script waits on `r_t
 
 ---
 
+## 12. Batch testing (AUTORUN=test)
+
+```text
+make AUTORUN=test DEBUG=0
+ └─ start_kernel → debug_autorun_user_and_exit("test")     boot/kernel.c
+     └─ proc_spawn_exec_wait("test")                       usr/autorun.c
+         └─ test main                                      home/root/test.c
+             ├─ open /home/root/testcases.list
+             └─ for each line (skip # and ! prefix):
+                 ├─ printf START marker
+                 ├─ fork → child execve("./name") → exit status
+                 ├─ parent waitpid
+                 ├─ printf END marker
+                 └─ BATCH_SUMMARY pass/fail/skip/total
+     └─ autorun: done → machine_poweroff
+
+Host: ./sh/run_batch.sh
+ └─ MYOS_QUIET=1 DEBUG=n timeout … start_qemu.sh | tee out/batch.log
+ └─ python3 tests/judge_batch.py out/batch.log
+```
+
+Case list: `home/root/testcases.list`. Rebuild kernel after changing `AUTORUN` (`rm -f out/boot/kernel.o` if needed).
+
+---
+
 ## 13. Web: serial → browser
 
 ```text
@@ -261,4 +286,4 @@ Definitions: `include/syscall.h`.
 
 ---
 
-*Last aligned with: console/log write split, bg script poll, Web channel demux (2026-06-15).*
+*Last aligned with: batch AUTORUN=test chain, console/log demux (2026-06-16).*

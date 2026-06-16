@@ -141,7 +141,7 @@ void proc_set_state(int pid, enum proc_state st)
 				procs[i].kctx_asleep = 0;
 				proc_user_diag_reset(pid);
 				if (procs[i].pagetable) {
-					printf("destroy vm pid=%d pt=%p\n",
+					proc_printf("destroy vm pid=%d pt=%p\n",
 					       pid, (void *)procs[i].pagetable);
 					vm_destroy(procs[i].pagetable);
 					procs[i].pagetable = NULL;
@@ -286,7 +286,7 @@ void proc_mark_zombie(int pid)
 
 	if (slot >= 0)
 		ppid = procs[slot].ppid;
-	printf("[zombie] pid=%d parent=%d\n", pid, ppid);
+	proc_printf("[zombie] pid=%d parent=%d\n", pid, ppid);
 	proc_set_state(pid, PROC_ZOMBIE);
 }
 

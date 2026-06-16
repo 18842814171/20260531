@@ -217,7 +217,7 @@ void trap_init(void)
 	 * kernel_gp_value stays 0 and trap_handler will keep forcing gp=0.
 	 */
 	asm volatile("mv %0, gp" : "=r"(kernel_gp_value));
-	printf("trap_init: kernel_gp=0x%lx\n", (unsigned long)kernel_gp_value);
+	boot_printf("trap_init: kernel_gp=0x%lx\n", (unsigned long)kernel_gp_value);
 	if (kernel_gp_value == 0)
 		panic("kernel_gp_value is 0 (fix start.S la gp, __global_pointer$)");
 	trap_vec_init((reg_t)trap_vector);

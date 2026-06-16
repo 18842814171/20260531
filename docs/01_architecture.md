@@ -44,8 +44,9 @@ start_kernel()                    [boot/kernel.c]
 
 | Flag | Effect |
 |------|--------|
-| `make` (default) | `-DDEBUG=1 -DCONFIG_LOG=1` — kernel `LOG_*` macros emit JSON |
-| `make DEBUG=0` | All `LOG_*` compile to no-ops; no `LOG {...}` on serial |
+| `make` (default) | `-DDEBUG=1` — `LOG_*` JSON; `boot_printf` / `proc_printf` traces |
+| `make DEBUG=0` | All `LOG_*` no-ops; boot/proc human traces off |
+| `make AUTORUN=test` | Skip login; run `./test` (batch driver) then poweroff; boot/proc traces off |
 | `make AUTORUN=ipc_echo` | Skip login; run one user ELF then poweroff |
 
 ### Core paths
@@ -284,16 +285,22 @@ See [05_web_frontend.md](05_web_frontend.md) and [04_logging_and_osviz.md](04_lo
 
 ## 10. Observability (summary)
 
+Three kernel output layers share one UART today; the host demuxes by line prefix:
+
 ```text
-Kernel (DEBUG=1):
-  LOG_* macros → log_write() → UART (LOG prefix lines)
-
-Shell / user text:
-  console_write() → UART
-
-Host Web:
-  SerialDemux → WebSocket with channel console | log
+LOG_* macros     → log_write()   → UART  →  Web event panel (DEBUG=1)
+boot_printf      → printf        → UART  →  terminal (CONSOLE_BOOT)
+proc_printf      → printf        → UART  →  terminal (CONSOLE_PROC)
+Shell / sys_write → console_write → UART  →  terminal
 ```
+
+| Switch | LOG_* | boot_printf | proc_printf |
+|--------|-------|-------------|-------------|
+| `make DEBUG=1` | on | on | on |
+| `make DEBUG=0` | off | off | off |
+| `make AUTORUN=…` | follows DEBUG | off | off |
+
+Web UI hides high-frequency `module=pmm` cards (`QUIET_MODULES`); kernel no longer logs every alloc/free. See [04_logging_and_osviz.md](04_logging_and_osviz.md) and [05_web_frontend.md](05_web_frontend.md).
 
 ---
 
@@ -308,7 +315,8 @@ Host Web:
 | [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | Historical defects and fixes |
 | [log/0613.md](../log/0613.md) | 2026-06-13 Stage 1–2 migration log |
 | [log/0614debug.md](../log/0614debug.md) | 2026-06-14 Stage 3–4 收尾与文档同步 |
+| [log/0616.md](../log/0616.md) | 2026-06-16 batch pipeline, console gates |
 
 ---
 
-*Last aligned with: console/log write split, Web channel demux, bg script timer poll (2026-06-15).*
+*Last aligned with: batch testing, boot/proc console gates, event panel queue (2026-06-16).*

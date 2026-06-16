@@ -156,7 +156,7 @@ void vm_init(void)
 	kzero(kernel_pt, PGSIZE);
 	vm_map_kernel_into(kernel_pt);
 	vm_activate(kernel_pt);
-	printf("vm_init: Sv39 enabled satp=0x%lx\n", (unsigned long)r_satp());
+	boot_printf("vm_init: Sv39 enabled satp=0x%lx\n", (unsigned long)r_satp());
 }
 
 pagetable_t vm_create(void)

@@ -57,12 +57,12 @@ void timer_init(void)
 		t++;
 	}
 
-	printf("timer_list=%p size=%lu\n", (void *)timer_list,
-	       (unsigned long)(MAX_TIMER * sizeof(struct timer)));
-	printf("timer_guard=%p..%p\n", (void *)timer_guard,
-	       (void *)(timer_guard + sizeof(timer_guard)));
-	printf("kernel_trap_cxt=%p size=%lu\n", (void *)&kernel_trap_cxt,
-	       (unsigned long)sizeof(struct context));
+	boot_printf("timer_list=%p size=%lu\n", (void *)timer_list,
+		    (unsigned long)(MAX_TIMER * sizeof(struct timer)));
+	boot_printf("timer_guard=%p..%p\n", (void *)timer_guard,
+		    (void *)(timer_guard + sizeof(timer_guard)));
+	boot_printf("kernel_trap_cxt=%p size=%lu\n", (void *)&kernel_trap_cxt,
+		    (unsigned long)sizeof(struct context));
 
 	timer_load(TIMER_INTERVAL);
 	trap_ie_enable(TRAP_IE_TIMER);

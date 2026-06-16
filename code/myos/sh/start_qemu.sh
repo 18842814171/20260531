@@ -34,31 +34,29 @@ if [[ ! -f "${KERNEL}" ]]; then
 fi
 
 # Interactive: direct QEMU on the terminal (keyboard + Ctrl+C work).
-# Non-interactive (CI/scripts): pipe stdout into osviz capture.
-# Note: shell DEBUG here is NOT the same as "make DEBUG=1" (kernel LOG_*).
-if [[ -t 0 && -t 1 ]]; then
-	QEMU_INTERACTIVE=1
-	DEBUG="${DEBUG:-n}"
-else
-	QEMU_INTERACTIVE=0
-	DEBUG="${DEBUG:-y}"
-fi
+# Non-interactive (CI/scripts): same default — Web UI demuxes LOG in server.py.
+# Optional: DEBUG=y pipes stdout through osviz serial_reader → events.jsonl (offline capture only).
+# Note: shell DEBUG is NOT make DEBUG=1 (kernel LOG_* compile switch).
+DEBUG="${DEBUG:-n}"
+MYOS_QUIET="${MYOS_QUIET:-0}"
 
 run_qemu() {
+	if [[ "${MYOS_QUIET}" == "1" ]]; then
+		if [[ -t 0 ]]; then
+			stty icanon echo 2>/dev/null || true
+			trap 'stty sane 2>/dev/null || true' EXIT INT TERM
+		fi
+		exec "${QEMU}" "$@"
+	fi
 	echo "myos QEMU"
 	echo "  kernel: ${KERNEL}"
-	echo "  kernel logging: make DEBUG=1 (sched/sem/proc) | make DEBUG=0 (quiet)"
+	echo "  kernel LOG: make DEBUG=1 (Web/event panel) | make DEBUG=0 (quiet terminal/batch)"
 	if [[ "${DEBUG}" != "n" && -f "${SERIAL_READER}" ]]; then
-		echo "  osviz:  ${LOG_ROOT}/events/ (capture only, not for typing)"
+		echo "  capture: ${LOG_ROOT}/events/events.jsonl (DEBUG=y, optional)"
 	fi
-	echo "  quit:   Ctrl+C"
-	echo "          poweroff at login: or myos>"
-	if [[ "${QEMU_INTERACTIVE}" == 1 ]]; then
-		echo "  mode:   interactive (-serial stdio, DEBUG=n)"
-		if [[ "${DEBUG}" != "n" ]]; then
-			echo "  warning: DEBUG=y pipes QEMU stdout — keyboard will NOT reach guest"
-			echo "           use: DEBUG=n ./sh/start_qemu.sh"
-		fi
+	echo "  quit:   Ctrl+C  |  poweroff at login: or myos>"
+	if [[ -t 0 && -t 1 && "${DEBUG}" != "n" ]]; then
+		echo "  warning: DEBUG=y pipes stdout — keyboard may not reach guest; use DEBUG=n"
 	fi
 	echo "------------------------------------"
 	if [[ -t 0 ]]; then

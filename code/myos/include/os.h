@@ -4,6 +4,7 @@
 #include "types.h"
 #include "riscv.h"
 #include "platform.h"
+#include "config.h"
 
 #include <stddef.h>
 #include <stdarg.h>

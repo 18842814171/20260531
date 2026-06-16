@@ -39,7 +39,7 @@ static void init_pmm_manager(void)
 {
 	pmm_manager = &default_pmm_manager;
 	/* pmm_manager = &best_fit_pmm_manager; */
-	printf("memory management: %s\n", pmm_manager->name);
+	boot_printf("memory management: %s\n", pmm_manager->name);
 	pmm_manager->init();
 }
 
@@ -50,10 +50,10 @@ void pmm_init(void)
 
 	pmm_npages = (HEAP_SIZE - (heap_start_aligned - HEAP_START)) / PAGE_SIZE
 		     - num_reserved_pages;
-	printf("HEAP_START = %p(aligned to %p), HEAP_SIZE = 0x%lx,\n"
-	       "num of reserved pages = %d, num of pages to be allocated for heap = %d\n",
-	       HEAP_START, heap_start_aligned, HEAP_SIZE,
-	       num_reserved_pages, (int)pmm_npages);
+	boot_printf("HEAP_START = %p(aligned to %p), HEAP_SIZE = 0x%lx,\n"
+		    "num of reserved pages = %d, num of pages to be allocated for heap = %d\n",
+		    HEAP_START, heap_start_aligned, HEAP_SIZE,
+		    num_reserved_pages, (int)pmm_npages);
 
 	pmm_pages = (struct Page *)HEAP_START;
 	pmm_alloc_start = heap_start_aligned + num_reserved_pages * PAGE_SIZE;
@@ -62,11 +62,11 @@ void pmm_init(void)
 	init_pmm_manager();
 	pmm_manager->init_memmap(pmm_pages, pmm_npages);
 
-	printf("TEXT:   %p -> %p\n", TEXT_START, TEXT_END);
-	printf("RODATA: %p -> %p\n", RODATA_START, RODATA_END);
-	printf("DATA:   %p -> %p\n", DATA_START, DATA_END);
-	printf("BSS:    %p -> %p\n", BSS_START, BSS_END);
-	printf("HEAP:   %p -> %p\n", (void *)pmm_alloc_start, (void *)pmm_alloc_end);
+	boot_printf("TEXT:   %p -> %p\n", TEXT_START, TEXT_END);
+	boot_printf("RODATA: %p -> %p\n", RODATA_START, RODATA_END);
+	boot_printf("DATA:   %p -> %p\n", DATA_START, DATA_END);
+	boot_printf("BSS:    %p -> %p\n", BSS_START, BSS_END);
+	boot_printf("HEAP:   %p -> %p\n", (void *)pmm_alloc_start, (void *)pmm_alloc_end);
 
 	pmm_manager->check();
 

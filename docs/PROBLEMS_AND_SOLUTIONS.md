@@ -395,6 +395,50 @@ The shell path **`proc_spawn_exec_wait` → scheduler dispatch → user executio
 
 **Resolution.** Call **`script_bg_poll`** from timer handler and before UART block; shell commands **`jobs`** and **`kill [pid]`** to inspect or stop.
 
+---
+
+### 11.6 Event bubbles appear out of order during `./hi`
+
+**Problem.** During trap bursts, newer events sometimes appeared above older ones in the right panel.
+
+**Root cause.** Each card used an independent random 100–500ms delay before mount.
+
+**Resolution.** Serial **`revealQueue`**: next bubble mounts only after the previous CSS transition ends (`REVEAL_GAP_MS` + fallback timer). See [05_web_frontend.md](05_web_frontend.md) §6.
+
+---
+
+### 11.7 PMM alloc/free floods event panel
+
+**Problem.** Running `./hi` filled the 500-event cap with `module=pmm` alloc/free cards.
+
+**Root cause.** Kernel logged every page alloc/free; Web showed all modules equally.
+
+**Resolution.** Kernel: remove per-operation `LOG_PMM` in `mem/pmm.c` (keep init/alloc_fail). Frontend: **`QUIET_MODULES`** skips `pmm` in the main panel.
+
+---
+
+## 14. Batch testing (AUTORUN=test)
+
+### 14.1 Hang before `BATCH_SUMMARY`
+
+**Problem.** `make AUTORUN=test` appeared to stall after `exec_hi`; judge reported no summary.
+
+**Root cause.** `read_line` in `home/root/test.c`: on EOF, stale stack byte `c == '\n'` caused an infinite empty-line loop.
+
+**Resolution.** Initialize `c = 0`; return `-1` when EOF with no bytes read.
+
+---
+
+### 14.2 AUTORUN change ignored until rebuild
+
+**Problem.** After `make AUTORUN=test`, QEMU still ran the previous autorun program.
+
+**Root cause.** `out/boot/kernel.o` not rebuilt when only `CONFIG_AUTORUN` string changed.
+
+**Resolution.** `rm -f out/boot/kernel.o` then `make AUTORUN=…`. Document in operator guides; `run_batch.sh` does not invoke `make`.
+
+---
+
 ## 12. User process scheduling (`proc_sched`)
 
 *Sections 12.1–12.4 document historical defects during coroutine-era scheduling. Current model: [01_architecture.md](01_architecture.md) §6.*
@@ -476,7 +520,7 @@ See [6.14.txt](../6.14.txt) and [01_architecture.md](01_architecture.md) §6.
 
 ## 13. Chronological arc (summary)
 
-Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **per-process trap frames** and **`proc_wait`** required **kernel `gp` in the trap vector** and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **UART RX IRQ + ring** and **`proc_sched` block/wakeup** enabled blocking `read` and **`ipc_echo`**. Coroutine-era **`proc_user_run` / `after_uspace`** fixed early exit stack mismatches but caused **READY starvation** and **stale continuation panics** until **`proc_kctx_switch`** and **`kctx_asleep`**. **2026-06-13:** **Stage 1–2** — `proc_kcontext`, dedicated **scheduler stack**, shell UART resume. **2026-06-14:** **Stages 3–4** — scheduler-only fresh dispatch, **`proc_user_trap_return`**, removal of coroutine/longjmp paths; TTY + piped **`ipc_echo`** verified. **Observability:** macro-gated **`LOG_*`** and **LibertyOS Web UI** with **server-side serial demux**.
+Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **per-process trap frames** and **`proc_wait`** required **kernel `gp` in the trap vector** and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **UART RX IRQ + ring** and **`proc_sched` block/wakeup** enabled blocking `read` and **`ipc_echo`**. Coroutine-era **`proc_user_run` / `after_uspace`** fixed early exit stack mismatches but caused **READY starvation** and **stale continuation panics** until **`proc_kctx_switch`** and **`kctx_asleep`**. **2026-06-13:** **Stage 1–2** — `proc_kcontext`, dedicated **scheduler stack**, shell UART resume. **2026-06-14:** **Stages 3–4** — scheduler-only fresh dispatch, **`proc_user_trap_return`**, removal of coroutine/longjmp paths; TTY + piped **`ipc_echo`** verified. **Observability:** macro-gated **`LOG_*`**, **`boot_printf`/`proc_printf`** console gates, **LibertyOS Web UI** with **server-side serial demux**, **batch regression** via **`AUTORUN=test`**. **2026-06-16:** event panel serial reveal queue, PMM quiet, **`run_batch.sh`** + **`judge_batch.py`**.
 
 ---
 
@@ -488,8 +532,8 @@ Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `
 | [02_call_chains.md](02_call_chains.md) | Block/wakeup call trees |
 | [README.md](README.md) | Operator quick start |
 | [log/0613.md](../log/0613.md) | 2026-06-13 Stage 1–2 change log |
-| [6.14.txt](../6.14.txt) | 2026-06-14 Stage 3–4 completion notes |
+| [log/0616.md](../log/0616.md) | 2026-06-16 batch pipeline and console gates |
 
 ---
 
-*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*
+*Last aligned with: batch AUTORUN=test, boot/proc printf gates, event panel queue, PMM quiet (2026-06-16).*
