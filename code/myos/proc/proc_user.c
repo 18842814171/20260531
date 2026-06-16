@@ -575,7 +575,7 @@ int proc_spawn_exec_wait(const char *path)
 
 	if (proc_load_elf(child, path) < 0) {
 		proc_set_state(child, PROC_UNUSED);
-		uart_puts("exec: load failed\n");
+		console_puts("exec: load failed\n");
 		return -1;
 	}
 
@@ -591,7 +591,7 @@ int proc_spawn_exec_bg(const char *path)
 	int j;
 
 	if (spawn_bg_pid > 0) {
-		uart_puts("bg: one user job already starting\n");
+		console_puts("bg: one user job already starting\n");
 		return -1;
 	}
 
@@ -613,7 +613,7 @@ int proc_spawn_exec_bg(const char *path)
 
 	if (proc_load_elf(child, path) < 0) {
 		proc_set_state(child, PROC_UNUSED);
-		uart_puts("exec: load failed\n");
+		console_puts("exec: load failed\n");
 		return -1;
 	}
 
@@ -621,7 +621,7 @@ int proc_spawn_exec_bg(const char *path)
 	if (task_create(spawn_bg_trampoline) != 0) {
 		spawn_bg_pid = -1;
 		proc_set_state(child, PROC_UNUSED);
-		uart_puts("bg: task create failed\n");
+		console_puts("bg: task create failed\n");
 		return -1;
 	}
 	return child;

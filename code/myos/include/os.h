@@ -8,7 +8,9 @@
 #include <stddef.h>
 #include <stdarg.h>
 
-/* uart (Phase 2: IRQ + ring buffer; see boot/uart.c) */
+#include "console_io.h"
+
+/* uart hardware (boot/uart.c); TX should go through console_io.h, not direct calls */
 extern int uart_putc(char ch);
 extern void uart_puts(char *s);
 extern void uart_rx_flush(void);
@@ -105,6 +107,9 @@ extern void demo_run_tasks(void);
 extern int script_run(const char *path);
 extern int script_run_bg(const char *path);
 extern void script_bg_poll(void);
+extern int script_bg_kill(int pid);
+extern int script_bg_active(void);
+extern int script_bg_pid(void);
 /* Fill buf with bg-script status; return 1 if pid is the active bg script job. */
 extern int script_bg_describe(int pid, char *buf, int buflen);
 extern int vi_edit(const char *path);

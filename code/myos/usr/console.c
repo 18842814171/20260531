@@ -129,7 +129,7 @@ static int looks_like_assign(const char *s)
 static void cmd_export(const char *args)
 {
 	if (shell_env_set_line(args) < 0)
-		uart_puts("export: bad assignment\n");
+		console_puts("export: bad assignment\n");
 }
 
 static int is_poweroff_cmd(const char *line)
@@ -157,9 +157,9 @@ static void put_dec(int v)
 		}
 	}
 	if (neg)
-		uart_putc('-');
+		console_putc('-');
 	while (i > 0)
-		uart_putc(buf[--i]);
+		console_putc(buf[--i]);
 }
 
 static void cmd_ps(int verbose)
@@ -169,7 +169,7 @@ static void cmd_ps(int verbose)
 	int n, i;
 
 	n = proc_list(list, PROC_MAX);
-	uart_puts("USER   PID  PPID STAT CMD\n");
+	console_puts("USER   PID  PPID STAT CMD\n");
 	for (i = 0; i < n; i++) {
 		switch (list[i].state) {
 		case PROC_RUNNING:
@@ -188,47 +188,47 @@ static void cmd_ps(int verbose)
 			st = '?';
 			break;
 		}
-		uart_puts("root ");
+		console_puts("root ");
 		put_dec(list[i].pid);
-		uart_putc(' ');
+		console_putc(' ');
 		put_dec(list[i].ppid);
-		uart_puts("   ");
-		uart_putc(st);
-		uart_puts("  ");
-		uart_puts(list[i].name);
-		uart_putc('\n');
+		console_puts("   ");
+		console_putc(st);
+		console_puts("  ");
+		console_puts(list[i].name);
+		console_putc('\n');
 	}
 	if (verbose)
-		uart_puts("(ps aux)\n");
+		console_puts("(ps aux)\n");
 }
 
 static void ls_emit(const char *name, int size, int is_dir, int exec)
 {
-	uart_puts("  ");
+	console_puts("  ");
 	if (is_dir)
-		uart_putc('d');
+		console_putc('d');
 	else if (exec)
-		uart_putc('x');
+		console_putc('x');
 	else
-		uart_putc('-');
-	uart_putc(' ');
-	uart_puts((char *)name);
+		console_putc('-');
+	console_putc(' ');
+	console_puts((char *)name);
 	if (!is_dir) {
-		uart_puts(" ");
+		console_puts(" ");
 		put_dec(size);
-		uart_puts(" bytes");
+		console_puts(" bytes");
 	}
-	uart_putc('\n');
+	console_putc('\n');
 }
 
 static void cmd_ls(const char *path)
 {
 	const char *dir = path && path[0] ? path : fs_getcwd();
 
-	uart_puts(dir);
-	uart_puts(":\n");
+	console_puts(dir);
+	console_puts(":\n");
 	if (fs_listdir(dir, ls_emit) == 0 && !fs_is_dir(dir))
-		uart_puts("  (not a directory)\n");
+		console_puts("  (not a directory)\n");
 }
 
 static void cmd_pwd(void)
@@ -237,8 +237,8 @@ static void cmd_pwd(void)
 	printf("[gp] pwd before: gp=0x%lx kernel_gp=0x%lx\n",
 	       (unsigned long)read_gp(), (unsigned long)kernel_gp_value);
 #endif
-	uart_puts((char *)fs_getcwd());
-	uart_putc('\n');
+	console_puts((char *)fs_getcwd());
+	console_putc('\n');
 #ifdef CONFIG_TRAP_GP_DIAG
 	printf("[gp] pwd after: gp=0x%lx kernel_gp=0x%lx\n",
 	       (unsigned long)read_gp(), (unsigned long)kernel_gp_value);
@@ -250,7 +250,7 @@ static void cmd_cd(const char *path)
 	const char *target = path && path[0] ? path : "/home/root";
 
 	if (fs_chdir(target) < 0)
-		uart_puts("cd: no such directory\n");
+		console_puts("cd: no such directory\n");
 }
 
 static void cmd_cat(const char *path)
@@ -266,13 +266,13 @@ static void cmd_cat(const char *path)
 	n = fs_read(fd, buf, sizeof(buf) - 1);
 	fs_close(fd);
 	if (n <= 0) {
-		uart_puts("(empty)\n");
+		console_puts("(empty)\n");
 		return;
 	}
 	buf[n] = '\0';
-	uart_puts(buf);
+	console_puts(buf);
 	if (buf[n - 1] != '\n')
-		uart_putc('\n');
+		console_putc('\n');
 }
 
 static void cmd_echo(char *args, char *redir, int append)
@@ -289,7 +289,7 @@ static void cmd_echo(char *args, char *redir, int append)
 			int fd = fs_open(redir, O_WRONLY | O_CREAT | O_APPEND);
 
 			if (fd < 0) {
-				uart_puts("echo: write failed\n");
+				console_puts("echo: write failed\n");
 				return;
 			}
 			if (expanded[0]) {
@@ -316,15 +316,15 @@ static void cmd_echo(char *args, char *redir, int append)
 		return;
 	}
 	if (expanded[0]) {
-		uart_puts(expanded);
-		uart_putc('\n');
+		console_puts(expanded);
+		console_putc('\n');
 	}
 }
 
 static void cmd_touch(const char *path)
 {
 	if (fs_create(path, 0) < 0 && !fs_exists(path))
-		uart_puts("touch: failed\n");
+		console_puts("touch: failed\n");
 }
 
 static reg_t shell_irq_save(void)
@@ -359,7 +359,7 @@ static int login_session(void)
 {
 	char line[LINE_MAX];
 
-	uart_puts("\nUsername: root\nlogin: \n");
+	console_puts("\nUsername: root\nlogin: \n");
 	uart_rx_flush();
 	for (;;) {
 		cpu_irq_enable();
@@ -375,7 +375,7 @@ static int login_session(void)
 			machine_poweroff();
 		if (str_eq(line, LOGIN_USER))
 			return 0;
-		uart_puts("\nLogin incorrect. Try again.\nlogin: ");
+		console_puts("\nLogin incorrect. Try again.\nlogin: ");
 		uart_rx_flush();
 	}
 }
@@ -396,6 +396,68 @@ static int parse_pid_arg(const char *s)
 	return pid;
 }
 
+static int parse_decimal_pid(const char *s)
+{
+	int pid = 0;
+
+	if (!s || !s[0])
+		return -1;
+	while (*s >= '0' && *s <= '9') {
+		pid = pid * 10 + (*s - '0');
+		s++;
+	}
+	if (*s != '\0')
+		return -1;
+	return pid;
+}
+
+static void cmd_jobs(void)
+{
+	char desc[128];
+	int pid;
+
+	pid = script_bg_pid();
+	if (pid < 0) {
+		console_puts("(no background script)\n");
+		return;
+	}
+	console_puts("[");
+	put_dec(pid);
+	console_puts("] ");
+	if (script_bg_describe(pid, desc, sizeof(desc)))
+		console_puts(desc);
+	else
+		console_puts("kernel bg script");
+	console_putc('\n');
+}
+
+static void cmd_kill(const char *arg)
+{
+	int pid;
+
+	if (!arg || !arg[0]) {
+		pid = script_bg_pid();
+		if (pid < 0) {
+			console_puts("kill: no background script\n");
+			return;
+		}
+		arg = NULL;
+	}
+	if (arg) {
+		pid = parse_decimal_pid(arg);
+		if (pid < 0) {
+			console_puts("usage: kill [pid]  (e.g. kill 2)\n");
+			return;
+		}
+	} else {
+		pid = script_bg_pid();
+	}
+	if (script_bg_kill(pid) == 0)
+		console_puts("background script stopped\n");
+	else
+		console_puts("kill: not a background script pid\n");
+}
+
 static void cmd_yebiao(const char *arg)
 {
 	int pid;
@@ -407,7 +469,7 @@ static void cmd_yebiao(const char *arg)
 	if (arg[0] == 'P' || arg[0] == 'p') {
 		pid = parse_pid_arg(arg);
 		if (pid < 0) {
-			uart_puts("usage: yebiao P<pid>  (e.g. yebiao P0, yebiao P2)\n");
+			console_puts("usage: yebiao P<pid>  (e.g. yebiao P0, yebiao P2)\n");
 			return;
 		}
 		vm_info_proc(pid);
@@ -418,13 +480,14 @@ static void cmd_yebiao(const char *arg)
 
 static void print_help(void)
 {
-	uart_puts("Shell commands (Linux-style):\n");
-	uart_puts("  cd [dir]        pwd             ls [dir]\n");
-	uart_puts("  cat <file>      touch <file>      vi <file> (i/Esc/:wq)\n");
-	uart_puts("  echo ...        echo ... > f      echo ... >> f\n");
-	uart_puts("  export k=v      k=v               . script.sh [&]\n");
-	uart_puts("  ./program [&]   sh script.sh [&]\n");
-	uart_puts("  ps / ps aux     yebiao [file|P<pid>]  help / logout\n");
+	console_puts("Shell commands (Linux-style):\n");
+	console_puts("  cd [dir]        pwd             ls [dir]\n");
+	console_puts("  cat <file>      touch <file>      vi <file> (i/Esc/:wq)\n");
+	console_puts("  echo ...        echo ... > f      echo ... >> f\n");
+	console_puts("  export k=v      k=v               . script.sh [&]\n");
+	console_puts("  ./program [&]   sh script.sh [&]\n");
+	console_puts("  ps / ps aux     jobs              kill [pid]\n");
+	console_puts("  yebiao [file|P<pid>]  help / logout\n");
 }
 
 static void run_script_path(const char *path, int bg)
@@ -434,11 +497,11 @@ static void run_script_path(const char *path, int bg)
 	if (bg) {
 		pid = script_run_bg(path);
 		if (pid > 0) {
-			uart_puts("[bg] pid ");
+			console_puts("[bg] pid ");
 			put_dec(pid);
-			uart_putc('\n');
+			console_putc('\n');
 			script_bg_poll();
-			uart_puts("(background script started)\n");
+			console_puts("(background script started)\n");
 		}
 	} else {
 		script_run(path);
@@ -452,9 +515,9 @@ static void run_elf_path(const char *path, int bg)
 	if (bg) {
 		pid = proc_spawn_exec_bg(path);
 		if (pid > 0) {
-			uart_puts("[bg] pid ");
+			console_puts("[bg] pid ");
 			put_dec(pid);
-			uart_putc('\n');
+			console_putc('\n');
 		}
 	} else {
 		proc_spawn_exec_wait(path);
@@ -468,13 +531,14 @@ static void shell_loop(void)
 	static char line[LINE_MAX];
 	static char prompt[96];
 
-	uart_puts("\nWelcome, root.\n");
+	console_puts("\nWelcome, root.\n");
 	fs_chdir("/home/root");
 	print_help();
 
 	for (;;) {
 		reg_t irq;
 
+		script_bg_poll();
 		uart_rx_flush();
 		snprintf(prompt, sizeof(prompt), "root@%s$ ", fs_getcwd());
 		if (uart_prompt_and_read_line(prompt, line, LINE_MAX) < 0)
@@ -491,7 +555,7 @@ static void shell_loop(void)
 			if (str_eq(line, "help") || str_eq(line, "?")) {
 			print_help();
 		} else if (str_eq(line, "logout") || str_eq(line, "exit")) {
-			uart_puts("Goodbye.\n");
+			console_puts("Goodbye.\n");
 			return;
 		} else if (is_poweroff_cmd(line)) {
 			machine_poweroff();
@@ -538,9 +602,13 @@ static void shell_loop(void)
 			cmd_ps(0);
 		} else if (str_eq(line, "ps aux")) {
 			cmd_ps(1);
+		} else if (str_eq(line, "jobs")) {
+			cmd_jobs();
+		} else if (str_eq(line, "kill") || str_prefix(line, "kill ")) {
+			cmd_kill(str_eq(line, "kill") ? NULL : skip_word(line + 5));
 		} else if (str_eq(line, "spawn worker") || str_eq(line, "spawn")) {
 			proc_spawn_worker_demo();
-			uart_puts("spawned worker (check with ps)\n");
+			console_puts("spawned worker (check with ps)\n");
 		} else if (str_eq(line, "run task") || str_eq(line, "task")) {
 			demo_run_tasks();
 		} else if (str_eq(line, "snapshot") || str_eq(line, "~snapshot")) {
@@ -550,7 +618,7 @@ static void shell_loop(void)
 		} else if (str_eq(line, "yebiao")) {
 			cmd_yebiao(NULL);
 		} else {
-			uart_puts("Unknown command. Type 'help'.\n");
+			console_puts("Unknown command. Type 'help'.\n");
 		}
 			shell_irq_restore(irq);
 		}
@@ -560,7 +628,7 @@ static void shell_loop(void)
 void console_run(void)
 {
 	for (;;) {
-		uart_puts("\n=== libertyos console ===\n");
+		console_puts("\n=== libertyos console ===\n");
 		login_session();
 		shell_loop();
 	}

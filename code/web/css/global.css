@@ -448,14 +448,55 @@ button {
 .workspace {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg-deep);
 }
 
+.workspace__splitter {
+  flex: 0 0 6px;
+  position: relative;
+  cursor: row-resize;
+  background: var(--border-subtle);
+  touch-action: none;
+  z-index: 2;
+}
+
+.workspace__splitter::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2.5rem;
+  height: 3px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: var(--text-dim);
+  opacity: 0.45;
+  transition: opacity var(--transition), background var(--transition);
+}
+
+.workspace__splitter:hover,
+.workspace__splitter:focus-visible,
+.workspace__splitter.workspace__splitter--dragging {
+  background: var(--accent-glow);
+}
+
+.workspace__splitter:hover::after,
+.workspace__splitter:focus-visible::after,
+.workspace__splitter.workspace__splitter--dragging::after {
+  opacity: 1;
+  background: var(--accent);
+}
+
+.workspace__splitter:focus-visible {
+  outline: none;
+}
+
 .file-panel {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 80px;
   display: flex;
   flex-direction: column;
   background: var(--bg-elevated);
@@ -700,10 +741,12 @@ button {
 /* ── Console (workspace bottom) ── */
 
 .console-panel--compact {
-  flex: 0 0 42%;
-  min-height: 180px;
-  max-height: 48%;
+  flex: 0 0 auto;
+  height: var(--console-panel-height, 280px);
+  min-height: 120px;
+  max-height: min(85vh, calc(100% - 80px));
   min-width: 0;
+  overflow: hidden;
 }
 
 /* ── Log bubble panel (right column, full height) ── */
@@ -767,8 +810,15 @@ button {
   padding: 0.65rem;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 0.55rem;
+}
+
+/* 少量日志时贴底显示；内容溢出后可正常向上滚动查看历史 */
+.log-bubble-list:has(.trap-card)::before {
+  content: '';
+  flex-grow: 1;
+  flex-shrink: 1;
+  min-height: 0;
 }
 
 .log-bubble-empty {
@@ -813,13 +863,12 @@ button {
 /* ── Trap log cards (light panel theme) ── */
 
 .log-bubble-panel .trap-card {
-  background: var(--bubble-bg);
   color: var(--bubble-text);
-  border-radius: var(--radius);
-  border: 1px solid var(--bubble-border);
-  border-left-width: 3px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .log-bubble-panel .trap-card.bubble-enter-pending {
@@ -833,11 +882,21 @@ button {
   transition: opacity 0.28s ease, transform 0.28s ease;
 }
 
-.log-bubble-panel .card-enter { border-left-color: #b8860b; }
-.log-bubble-panel .card-leave { border-left-color: #4a6fa5; }
-.log-bubble-panel .card-diag  { border-left-color: #2d8a5e; }
-.log-bubble-panel .card-boot  { border-left-color: #2563eb; }
-.log-bubble-panel .card-default { border-left-color: #8a8578; }
+.log-bubble-panel .card-enter {
+  background: linear-gradient(180deg, #f8ecd4 0%, #edd09a 100%);
+}
+.log-bubble-panel .card-leave {
+  background: linear-gradient(180deg, #dce8f6 0%, #b4cae3 100%);
+}
+.log-bubble-panel .card-diag {
+  background: linear-gradient(180deg, #d4f0e6 0%, #a8d9c4 100%);
+}
+.log-bubble-panel .card-boot {
+  background: linear-gradient(180deg, #d8e6fd 0%, #a8c4f8 100%);
+}
+.log-bubble-panel .card-default {
+  background: linear-gradient(180deg, #ece8e2 0%, #d4cfc6 100%);
+}
 
 .log-bubble-panel .card-enter .event-icon { color: #b8860b; }
 .log-bubble-panel .card-leave .event-icon { color: #4a6fa5; }
@@ -853,12 +912,12 @@ button {
   gap: 0.35rem;
   padding: 0.45rem 0.65rem;
   border-bottom: none;
-  border-radius: var(--radius);
+  border-radius: 12px;
 }
 
 .log-bubble-panel .trap-card--expanded .card-header {
-  border-bottom: 1px dashed var(--bubble-border);
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.1);
+  border-radius: 12px 12px 0 0;
 }
 
 .log-bubble-panel .card-header--clickable {
@@ -867,7 +926,7 @@ button {
 }
 
 .log-bubble-panel .card-header--clickable:hover {
-  background: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .log-bubble-panel .card-header__meta {
@@ -1041,8 +1100,13 @@ button {
   }
 
   .console-panel--compact {
-    flex: 0 0 220px;
-    max-height: none;
+    height: var(--console-panel-height, 220px);
+    min-height: 100px;
+    max-height: min(60vh, calc(100% - 60px));
+  }
+
+  .workspace__splitter {
+    flex-basis: 8px;
   }
 
   .log-bubble-panel .info-row {

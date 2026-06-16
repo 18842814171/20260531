@@ -40,7 +40,7 @@ static int sys_write(int fd, const char *buf, int len)
 			if (copy_from_user(kbuf, buf + total, chunk) < 0)
 				return -1;
 			for (i = 0; i < chunk; i++)
-				uart_putc(kbuf[i]);
+				console_putc(kbuf[i]);
 			total += chunk;
 		}
 		return total;

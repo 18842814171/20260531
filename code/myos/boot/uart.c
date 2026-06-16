@@ -210,10 +210,9 @@ int uart_readc_wait(void)
 		c = uart_try_getc();
 		if (c >= 0)
 			return c;
+		script_bg_poll();
 		if (uart_rx_use_irq)
 			proc_block(&uart_read_wq);
-		else
-			script_bg_poll();
 	}
 }
 
@@ -285,18 +284,18 @@ static int uart_read_line_poll(char *buf, int maxlen)
 		if (c == 8 || c == 127) {
 			if (i > 0) {
 				i--;
-				uart_puts("\b \b");
+				console_puts("\b \b");
 			}
 			continue;
 		}
 		if (c >= 32 && c < 127) {
 			buf[i++] = (char)c;
-			uart_putc((char)c);
+			console_putc((char)c);
 		}
 	}
 
 	buf[i] = '\0';
-	uart_puts("\n");
+	console_puts("\n");
 	uart_irq_restore(irq);
 	return i;
 }
@@ -329,18 +328,18 @@ static int uart_read_line_irq(char *buf, int maxlen)
 		if (c == 8 || c == 127) {
 			if (i > 0) {
 				i--;
-				uart_puts("\b \b");
+				console_puts("\b \b");
 			}
 			continue;
 		}
 		if (c >= 32 && c < 127) {
 			buf[i++] = (char)c;
-			uart_putc((char)c);
+			console_putc((char)c);
 		}
 	}
 
 	buf[i] = '\0';
-	uart_puts("\n");
+	console_puts("\n");
 	return i;
 }
 
@@ -354,7 +353,7 @@ int uart_read_line(char *buf, int maxlen)
 int uart_prompt_and_read_line(const char *prompt, char *buf, int maxlen)
 {
 	if (prompt)
-		uart_puts((char *)prompt);
+		console_puts((char *)prompt);
 	uart_rx_flush();
 	return uart_read_line(buf, maxlen);
 }
@@ -386,30 +385,30 @@ static void uart_puthex8(uint8_t v)
 	buf[0] = hex[(v >> 4) & 0xf];
 	buf[1] = hex[v & 0xf];
 	buf[2] = '\0';
-	uart_puts(buf);
+	console_puts(buf);
 }
 
 void uart_lsr_diag(void)
 {
-	uart_puts("\n=== UART LSR diag (press keys; LSR bit0=RX ready) ===\n");
+	console_puts("\n=== UART LSR diag (press keys; LSR bit0=RX ready) ===\n");
 	for (;;) {
 		uint8_t lsr = uart_read_reg(UART_LSR);
 
 		uart_puthex8(lsr);
-		uart_puts("\n");
+		console_puts("\n");
 		if (lsr & UART_LSR_RX_READY) {
 			uint8_t ch = uart_read_reg(UART_RHR);
 
-			uart_puts("  RHR=");
+			console_puts("  RHR=");
 			uart_puthex8(ch);
-			uart_puts(" '");
+			console_puts(" '");
 			if (ch >= 32 && ch < 127)
-				uart_putc((char)ch);
+				console_putc((char)ch);
 			else if (ch == '\r')
-				uart_puts("\\r");
+				console_puts("\\r");
 			else if (ch == '\n')
-				uart_puts("\\n");
-			uart_puts("'\n");
+				console_puts("\\n");
+			console_puts("'\n");
 		}
 		for (volatile int j = 0; j < 1000000; j++)
 			;
@@ -421,13 +420,13 @@ void uart_hw_test(void)
 {
 	int c;
 
-	uart_puts("\nUART TEST (IRQ ring or poll; type keys + Enter)\n");
+	console_puts("\nUART TEST (IRQ ring or poll; type keys + Enter)\n");
 	for (;;) {
 		c = uart_try_getc();
 		if (c < 0)
 			continue;
-		uart_puts("\nRX=");
-		uart_putc((char)c);
-		uart_puts("\n");
+		console_puts("\nRX=");
+		console_putc((char)c);
+		console_puts("\n");
 	}
 }

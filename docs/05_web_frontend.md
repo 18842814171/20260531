@@ -1,6 +1,6 @@
 # LibertyOS Web Frontend
 
-**Scope:** Browser UI for interactive QEMU sessions — terminal, file browser, and kernel event bubbles. Code under `code/web/`.
+**Scope:** Browser UI for interactive QEMU sessions — terminal, file browser, and kernel event panel. Code under `code/web/`.
 
 ---
 
@@ -10,21 +10,23 @@
 index.html          Login (username must be root) → sessionStorage
 desktop.html        Main workspace
   ├─ sidebar        Desktop icons + /home/root file tree
-  ├─ workspace      File preview + terminal panel
-  └─ log-bubble-panel   Right column: parsed LOG events (4 per page)
+  ├─ workspace      File preview + resizable terminal (drag splitter)
+  └─ log-bubble-panel   Right column: kernel events (newest at bottom)
 ```
 
 Scripts (load order on `desktop.html`):
 
 | File | Role |
 |------|------|
-| `js/global.js` | Session, file icons (`bi-*`) |
-| `js/logs.js` | Event bubble render + pager |
-| `js/terminal.js` | WebSocket PTY, login gate, terminal output |
+| `js/global.js` | Session, file icons |
+| `js/logs.js` | Event cards, scroll feed (max 500) |
+| `js/terminal.js` | WebSocket, login gate, line/raw input |
 | `js/files.js` | `/api/files`, run command helper |
-| `js/desktop.js` | Wiring, view switch |
+| `js/desktop.js` | Wiring, terminal height splitter |
 
 Styles: `css/global.css`.
+
+**Terminal height:** Drag `#console-splitter` between preview and terminal; double-click resets; height saved in `localStorage`.
 
 ---
 
@@ -32,7 +34,7 @@ Styles: `css/global.css`.
 
 ```text
 Browser
-  → nginx :3333 (optional, nginx-libertyos.conf)
+  → nginx :3333 (optional)
   → Flask server.py  VM_HOST:VM_PORT (default 127.0.0.1:5000)
        ├─ GET /              index.html
        ├─ GET /api/files     list /home/root (host mirror)
@@ -41,15 +43,7 @@ Browser
 ```
 
 Start: `code/web/start_server.sh`  
-Environment: `MYOS_ROOT`, `WEB_DIR`, `VM_HOST`, `VM_PORT`.
-
-QEMU launch (inside PTY):
-
-```bash
-cd $MYOS_ROOT && DEBUG=n ./sh/start_qemu.sh
-```
-
-`server.py` forces `DEBUG=n` so stdout is **not** piped through `serial_reader.py`; demux is done in Python.
+QEMU launch inside PTY: `DEBUG=n ./sh/start_qemu.sh` (interactive serial).
 
 ---
 
@@ -59,107 +53,96 @@ Single connection `/ws/ssh`. JSON messages:
 
 ### Server → client
 
-| type | Fields | Consumer |
-|------|--------|----------|
-| `output` | `data` (string, usually line with `\n`) | Terminal pane |
-| `event` | `event` (object, parsed LOG JSON) | `LibertyLogs.addEvent` |
-| `snapshot` | `snapshot` (object) | `LibertyLogs.handleSnapshot` |
+| type | Fields | UI target |
+|------|--------|-----------|
+| `output` | `channel: "console"`, `data` | Terminal pane |
+| `event` | `channel: "log"`, `event` (object) | Event panel |
+| `snapshot` | `channel: "log"`, `snapshot` (object) | Event panel |
 | `error` | `message` | Terminal (error style) |
+
+Legacy messages without `channel` are still accepted.
 
 ### Client → server
 
 | type | Fields |
 |------|--------|
-| `input` | `data` (raw bytes, include `\n` for Enter) |
+| `input` | `data` (raw bytes; `\n` for Enter) |
 
-**No second WebSocket** for logs; message type discriminates streams.
+One WebSocket carries both streams; type and channel distinguish them.
 
 ---
 
 ## 4. SerialDemux (`server.py`)
 
-Problem: kernel LOG and shell text share one PTY byte stream.
+Guest console text and structured logs share one PTY byte stream.
 
-Solution: buffer PTY reads, split on `\n`, classify each complete line:
+**Classification**
 
-```text
-line.startswith("LOG ")           →  {type:"event", event: json.loads(body)}
-line.startswith("LOG_SNAPSHOT ")  →  {type:"snapshot", snapshot: …}
-else                              →  {type:"output", data: line}
-```
+- Lines (or embedded segments) starting with `LOG ` → `type=event`, `channel=log`
+- `LOG_SNAPSHOT ` → `type=snapshot`, `channel=log`
+- All other bytes → `type=output`, `channel=console`
 
-**Partial-line rules**
+**Interleaved input:** When shell output and a log line arrive in one chunk (e.g. `cLOG {"ts_ms":…}`), demux extracts the log segment and forwards the surrounding bytes as console output.
 
-- Suffix that may be an incomplete `LOG` / `LOG_SNAPSHOT` prefix → hold in buffer
-- Other incomplete lines → hold until `\n` (do not flush mid-line)
-- On disconnect → `flush()` remaining buffer as `output`
+**Partial lines:** Incomplete `LOG` / `LOG_SNAPSHOT` prefixes are held in buffer until `\n` or disconnect flush.
 
-Invalid JSON after `LOG ` prefix falls back to `output` (safe degradation).
+Invalid JSON after a log prefix falls back to console output.
 
 ---
 
-## 5. Terminal gate (`terminal.js`)
+## 5. Terminal (`terminal.js`)
 
-Web UI does not show boot spam before login completes.
+### Login gate
 
-```text
-preShellBuf accumulates all output chunks
-until "Welcome, root." appears
-  → shellReady = true, termGateOpen = true
-  → clear #console-output, show from welcome onward
-```
+Output before `\nWelcome, root.\n` is buffered in `preShellBuf` and not shown. After welcome, terminal opens; auto-login sends `root` when the login prompt appears.
 
-| Phase | Behaviour |
-|-------|-----------|
-| Before welcome | Output accumulated in `preShellBuf` only; terminal visually empty |
-| After welcome | `appendTerminalOutput` renders `type=output` |
-| Events | `type=event` / `snapshot` always go to right panel (even during boot) |
+### Line mode (default shell)
 
-**Auto-login:** After seeing `login:` or `Username: root`, send session user (`root`) once.
+User types in the input box; **Enter** sends the full line. No local echo — only guest output is displayed (avoids duplicate lines with `vi` and shell echo).
 
-**Local echo:** `sendCommand` appends the typed line to the terminal when `shellReady` (Web input box is not QEMU echo).
+### Raw mode (interactive programs)
 
-**Static prompt label:** `#console-prompt` in HTML is decorative; readiness is determined by welcome text, not the label.
+When output contains `-- vi … --`, `-- NORMAL --`, `-- INSERT --`, or `ipc_echo`’s input prompt, the UI switches to **single-key** mode: each key is sent immediately (Esc, Backspace, Enter included). Exits on `vi: saved`, `vi: quit`, or `ipc_echo` done.
+
+### Log leak fallback
+
+If a log line still reaches `type=output`, the client strips `LOG {"ts_ms"…}` segments and forwards them to the event panel.
 
 ---
 
-## 6. Event bubbles (`logs.js`)
+## 6. Event panel (`logs.js`)
 
-- Renders trap/boot/proc/pmm events as cards (Bootstrap Icons)
-- Special templates: `trap/enter`, `trap/leave`, `trap-diag/leave_handler`
-- Pager: 4 events per page, max 500 retained
-- **No** client-side `LOG` line parsing after demux (legacy `stripEvents` removed)
+- Card templates for trap, boot, proc, pmm, etc.
+- Newest events at bottom; auto-scroll when near bottom; upward scroll pauses follow
+- Max 500 events retained
 
 ---
 
-## 7. Typical session flow
+## 7. Typical session
 
 ```text
-1. index.html — login as root → sessionStorage
-2. desktop.html — WebSocket connect
-3. Boot LOG events → right panel bubbles
-4. Boot printf (HEAP_*, etc.) → preShellBuf (hidden)
-5. Welcome, root. → terminal opens; auto-login if needed
-6. User runs ./hi in input box
-   ├─ local echo: ./hi
-   ├─ output: hi from ./hi
-   └─ events: proc/fork, trap/enter, proc/exit (right panel)
+1. Login → WebSocket connect
+2. Boot logs → right panel (via demux)
+3. Welcome, root. → terminal visible
+4. User runs ./hi
+   → output: hi from ./hi
+   → events: proc/trap (right panel)
+5. User runs vi file — raw mode; :wq saves; returns to line mode
 ```
 
 ---
 
 ## 8. Troubleshooting
 
-| Symptom | Likely cause | Check |
-|---------|--------------|-------|
-| Bubbles work, terminal empty | Welcome never detected; gate closed | Serial has `\nWelcome, root.\n`; hard refresh |
-| `./hi` no output | Same gate issue, or kernel exec failure | QEMU direct: `./sh/start_qemu.sh` |
-| LOG lines in terminal | Old server without demux | Restart `start_server.sh` |
-| JSON half-lines in UI | Partial flush bug | Update `SerialDemux` (hold until `\n`) |
-| Keyboard ignored in QEMU direct | `DEBUG=y` pipes stdout to osviz | Use **`DEBUG=n ./sh/start_qemu.sh`** on a real terminal |
-| Shell frozen at `login:` | Scheduler did not resume pid 1 after UART block | Fixed via **`kctx_asleep`** (2026-06-13); rebuild kernel |
-| `ipc_echo` panic on interactive `q` | Stale coroutine dispatch / wrong sched parent | Fixed via scheduler-only kctx dispatch (2026-06-14); rebuild kernel |
-| Input ignored | WebSocket down | Status dot / reconnect |
+| Symptom | Likely cause | Action |
+|---------|--------------|--------|
+| Terminal empty after login | Welcome not detected | Check serial has `\nWelcome, root.\n`; hard refresh |
+| LOG JSON in terminal | Old server or demux gap | Restart `start_server.sh`; hard refresh |
+| vi lines duplicated | Local echo (fixed) | Hard refresh browser |
+| vi keys ignored | Still in line mode | Wait for raw-mode hint; focus input box |
+| Background script stuck in sleep | Poll only on timer | Rebuild kernel; or `kill 2` in shell |
+| Cannot start second `sh … &` | One bg script limit | `kill` or `jobs` then retry |
+| Bubble list won't scroll up | CSS flex-end bug (fixed) | Hard refresh |
 
 ---
 
@@ -167,12 +150,10 @@ until "Welcome, root." appears
 
 | Document | Contents |
 |----------|----------|
-| [04_logging_and_osviz.md](04_logging_and_osviz.md) | LOG format, host tools |
+| [04_logging_and_osviz.md](04_logging_and_osviz.md) | Kernel log format, host tools |
 | [01_architecture.md](01_architecture.md) | §9 Web data flow |
-| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §11 Web issues; §12 scheduling |
-| [log/0613.md](../log/0613.md) | 2026-06-13 Stage 1–2 log |
-| [6.14.txt](../6.14.txt) | 2026-06-14 Stage 3–4 completion |
+| [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §11 Web issues |
 
 ---
 
-*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*
+*Last aligned with: console/log channel demux, terminal splitter, raw vi input, bg script poll (2026-06-15).*

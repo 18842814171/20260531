@@ -31,7 +31,7 @@ _start                          boot/start.S
  └─ trap_vector                  interrupt/entry.S
      ├─ reg_save (kernel_trap_cxt or per-proc user_ctx)
      ├─ trap_handler               interrupt/trap.c
-     │   ├─ TRAP_IRQ_TIMER → timer_handler
+     │   ├─ TRAP_IRQ_TIMER → timer_handler → script_bg_poll
      │   ├─ TRAP_IRQ_SOFT  → (preemptive schedule disabled)
      │   └─ TRAP_IRQ_EXTERNAL → external_interrupt_handler
      │         ├─ plic_claim
@@ -185,21 +185,41 @@ user load/store to unmapped user page
 
 ```text
 LOG_SCHED("run", d)             proc/proc_sched.c
- └─ osviz_event → printf("LOG {...}\n") → UART
+ └─ osviz_event → log_puts("LOG {...}\n") → UART
 ```
 
-See [04_logging_and_osviz.md](04_logging_and_osviz.md).
+Shell and user stdout use `console_*` instead. See [04_logging_and_osviz.md](04_logging_and_osviz.md).
 
 ---
 
-## 12. Web: serial → browser
+## 12. Background shell script (`. script.sh &`)
+
+```text
+shell_loop → script_run_bg           usr/script.c
+ └─ proc_alloc; shell_env_fork
+ └─ script_bg_poll (once at start)
+
+Later (timer IRQ, UART wait, shell prompt):
+ script_bg_poll
+   ├─ sleep_end elapsed → script_run_step (echo, assign, …)
+   └─ SCRIPT_STEP_DONE → proc UNUSED; bg_job cleared
+
+shell: kill [pid] / jobs          usr/console.c
+ └─ script_bg_kill / script_bg_describe
+```
+
+Only one kernel background script at a time. `sleep N` in a script waits on `r_time()`; progress requires periodic `script_bg_poll` (timer handler + shell read path).
+
+---
+
+## 13. Web: serial → browser
 
 ```text
 QEMU -serial stdio
  └─ PTY (server.py) → SerialDemux → WebSocket
-     ├─ LOG {...}     → type=event
-     ├─ LOG_SNAPSHOT  → type=snapshot
-     └─ else          → type=output
+     ├─ LOG line (incl. embedded)  → type=event, channel=log
+     ├─ LOG_SNAPSHOT               → type=snapshot, channel=log
+     └─ else                       → type=output, channel=console
 ```
 
 See [05_web_frontend.md](05_web_frontend.md).
@@ -241,4 +261,4 @@ Definitions: `include/syscall.h`.
 
 ---
 
-*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*
+*Last aligned with: console/log write split, bg script poll, Web channel demux (2026-06-15).*

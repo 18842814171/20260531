@@ -14,7 +14,7 @@
 | Document | Contents |
 |----------|----------|
 | [04_logging_and_osviz.md](04_logging_and_osviz.md) | Kernel `LOG_*` macros, UART JSON lines, host capture, WebSocket demux |
-| [05_web_frontend.md](05_web_frontend.md) | LibertyOS Web UI, `server.py`, terminal gate, event bubbles |
+| [05_web_frontend.md](05_web_frontend.md) | LibertyOS Web UI, channel demux, terminal/raw input, event panel |
 
 ---
 
@@ -71,4 +71,4 @@ See [使用方法.md](../使用方法.md) for a concise Chinese operator sheet.
 
 ---
 
-*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*
+*Last aligned with: console/log write split, Web channel demux, bg script poll, shell kill/jobs (2026-06-15).*

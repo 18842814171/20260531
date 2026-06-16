@@ -54,15 +54,27 @@
 
 ## UART driver
 
-**Role:** NS16550 MMIO console; RX IRQ + 128-byte ring; blocking read for user and shell.
+**Role:** NS16550 hardware; RX IRQ + ring; blocking read for shell and user programs.
 
 | Kind | Functions / symbols |
 |------|---------------------|
-| **Entry** | `uart_init` at boot; `uart_irq_enable`; `uart_readc_wait` from `sys_read` |
-| **Core** | `uart_irq_handler`, `uart_ring_put/get`, `uart_putc`, `uart_read_line` (`boot/uart.c`) |
-| **Exit** | `proc_block(&uart_read_wq)` when ring empty; wakeup on IRQ |
+| **Entry** | `uart_init`; `uart_irq_enable`; `uart_readc_wait` from `sys_read` |
+| **Core** | `uart_irq_handler`, `uart_putc` (hardware TX), `uart_read_line` |
+| **Exit** | `proc_block(&uart_read_wq)` when ring empty; calls `script_bg_poll` before block |
 
-**Note:** `LOG_*` and shell text share the same UART TX path.
+**Note:** Application output uses `console_*`; logs use `log_*`; both call `uart_putc` today.
+
+---
+
+## Console I/O (`boot/console_io.c`)
+
+**Role:** Split guest output into console vs log APIs; single UART backend for now.
+
+| Kind | Functions / symbols |
+|------|---------------------|
+| **Entry** | `console_puts`, `log_puts` from shell, `printf`, `osviz_k.c` |
+| **Core** | `console_write`, `log_write` → `uart_putc` |
+| **Future** | `log_write` may redirect to host pipe / socket / file / second UART |
 
 ---
 
@@ -179,15 +191,18 @@
 
 ## Console / shell
 
-**Role:** Login, command parser, built-ins, `./prog` launcher.
+**Role:** Login, command parser, built-ins, program launcher, kernel background scripts.
 
 | Kind | Functions / symbols |
 |------|---------------------|
 | **Entry** | `console_run` from `start_kernel` |
-| **Core** | `login_session`, `shell_loop`, `proc_spawn_exec_wait` |
-| **Exit** | `logout` → `login_session`; `poweroff` → `machine_poweroff` |
+| **Core** | `shell_loop`, `script_run_bg`, `script_bg_poll`, `proc_spawn_exec_wait` |
+| **Built-ins** | `jobs`, `kill [pid]` (stop bg script), `ps`, `vi`, `.` / `sh` scripts |
+| **Exit** | `logout`; `poweroff` |
 
-**Welcome string:** `\nWelcome, root.\n` — used by Web UI terminal gate.
+**Welcome string:** `\nWelcome, root.\n` — Web terminal gate.
+
+**Background scripts:** At most one active (`script_run_bg`). `sleep` in script needs timer-driven `script_bg_poll`.
 
 ---
 
@@ -198,7 +213,7 @@
 | Kind | Functions / symbols |
 |------|---------------------|
 | **Entry** | `LOG_*` at call sites; `trap_diag_*` when verbose |
-| **Core** | `osviz_event`, `osviz_snapshot` (`boot/osviz_k.c`) |
+| **Core** | `osviz_event`, `osviz_snapshot` → `log_puts` (`boot/osviz_k.c`) |
 | **Build** | `make` → `DEBUG=1`; `make DEBUG=0` → no-ops |
 
 **Modules:** `boot`, `trap`, `trap-diag`, `proc`, `pmm`, `sched`, `sem`, `irq`.
@@ -212,7 +227,8 @@
 | Kind | Functions / symbols |
 |------|---------------------|
 | **Entry** | `ws_ssh` (`server.py`); PTY runs `start_qemu.sh` with `DEBUG=n` |
-| **Core** | `SerialDemux`; WebSocket types `output` / `event` / `snapshot` |
+| **Core** | `SerialDemux`; WebSocket `channel`: `console` / `log` |
+| **Frontend** | Terminal gate, raw mode (vi), event panel, height splitter |
 | **Exit** | WebSocket close → terminate QEMU subprocess |
 
 ---
@@ -239,7 +255,8 @@
 | How does fresh user dispatch work? | `proc_sched_dispatch_one` → `proc_kctx_switch(sched_kctx, child_kctx)` → `proc_user_first_run` |
 | What is `proc_user_in_uspace`? | Set in `first_run` until `proc_user_trap_return`; prevents re-dispatch during yield unwind |
 | When is `do_syscall` skipped for exit? | `SYS_exit` handled in `handle_sync_exception` |
-| When does Web show program output? | `SYS_write` → UART → demux `type=output` after Welcome gate |
+| When does Web show program output? | `console_write` → UART → demux `channel=console` after Welcome gate |
+| How to stop a background script? | `kill` or `kill <pid>`; `jobs` shows status |
 
 ---
 
@@ -255,4 +272,4 @@
 
 ---
 
-*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*
+*Last aligned with: console/log write split, bg script, Web channel demux (2026-06-15).*

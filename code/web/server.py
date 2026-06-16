@@ -27,17 +27,39 @@ PORT = int(os.environ.get("VM_PORT", "5000"))  # 与 nginx-libertyos.conf 中 pr
 LOG_EVENT_PREFIX = "LOG "
 LOG_SNAPSHOT_PREFIX = "LOG_SNAPSHOT "
 
+# Matches kernel console_io.h channels (step 2: both on UART; host demux splits).
+CHANNEL_CONSOLE = "console"
+CHANNEL_LOG = "log"
+
 app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="")
 CORS(app)
 sock = Sock(app)
 
 
 class SerialDemux:
-    """Split QEMU serial: LOG* -> WebSocket event/snapshot, everything else -> output."""
+    """Demux guest serial: console_write → terminal, log_write → event bubbles.
+
+    Step 2: kernel routes both APIs to one UART; we split by LOG line framing.
+    Step 3: log_write may use pipe/socket/file/2nd UART — demux stays the same.
+    """
+
+    _LOG_MARKERS = (
+        (LOG_EVENT_PREFIX.encode("utf-8"), LOG_EVENT_PREFIX, "event"),
+        (LOG_SNAPSHOT_PREFIX.encode("utf-8"), LOG_SNAPSHOT_PREFIX, "snapshot"),
+    )
 
     def __init__(self, send_json: Callable[[Dict], None]):
         self._send_json = send_json
         self._buf = bytearray()
+
+    def _send_console(self, data: str) -> None:
+        self._send_json({"type": "output", "channel": CHANNEL_CONSOLE, "data": data})
+
+    def _send_log_event(self, event: Dict) -> None:
+        self._send_json({"type": "event", "channel": CHANNEL_LOG, "event": event})
+
+    def _send_log_snapshot(self, snapshot: Dict) -> None:
+        self._send_json({"type": "snapshot", "channel": CHANNEL_LOG, "snapshot": snapshot})
 
     def feed(self, chunk: bytes) -> None:
         if not chunk:
@@ -50,10 +72,12 @@ class SerialDemux:
             return
         text = self._buf.decode("utf-8", errors="replace")
         self._buf.clear()
-        self._send_json({"type": "output", "data": text})
+        self._send_console(text)
 
     def _drain(self) -> None:
         while True:
+            if self._try_extract_embedded_log():
+                continue
             nl = self._buf.find(b"\n")
             if nl < 0:
                 self._flush_safe_partial()
@@ -62,19 +86,63 @@ class SerialDemux:
             del self._buf[: nl + 1]
             self._dispatch_line(line)
 
-    @staticmethod
-    def _hold_partial(text: str) -> bool:
-        """Hold bytes that may be an incomplete LOG / LOG_SNAPSHOT line."""
-        stripped = text.lstrip("\r\n")
-        if not stripped:
+    def _find_log_marker(self, data: bytes):
+        best = None
+        for prefix_b, prefix_s, kind in self._LOG_MARKERS:
+            idx = data.find(prefix_b)
+            if idx >= 0 and (best is None or idx < best[0]):
+                best = (idx, prefix_s, kind)
+        return best
+
+    def _try_extract_embedded_log(self) -> bool:
+        """Pull LOG / LOG_SNAPSHOT lines even when interleaved with shell bytes."""
+        if not self._buf:
             return False
-        if stripped.startswith(LOG_SNAPSHOT_PREFIX):
-            return True
-        if stripped.startswith(LOG_EVENT_PREFIX):
-            return True
-        for marker in (LOG_EVENT_PREFIX, LOG_SNAPSHOT_PREFIX):
-            if len(stripped) < len(marker) and marker.startswith(stripped):
+
+        found = self._find_log_marker(bytes(self._buf))
+        if found is None:
+            return False
+
+        idx, prefix_s, kind = found
+        nl = self._buf.find(b"\n", idx)
+        if nl < 0:
+            return False
+
+        if idx > 0:
+            before = bytes(self._buf[:idx]).decode("utf-8", errors="replace")
+            if before:
+                self._send_console(before)
+
+        segment = bytes(self._buf[idx : nl + 1]).decode("utf-8", errors="replace")
+        del self._buf[: nl + 1]
+        self._dispatch_log_segment(segment, prefix_s, kind)
+        return True
+
+    @classmethod
+    def _hold_partial(cls, text: str) -> bool:
+        """Hold bytes that may be an incomplete LOG / LOG_SNAPSHOT line."""
+        if not text:
+            return False
+
+        for prefix_b, prefix_s, _kind in cls._LOG_MARKERS:
+            for k in range(1, len(prefix_s)):
+                if text.endswith(prefix_s[:k]):
+                    return True
+
+        start = 0
+        while True:
+            found = None
+            for _prefix_b, prefix_s, _kind in cls._LOG_MARKERS:
+                idx = text.find(prefix_s, start)
+                if idx >= 0 and (found is None or idx < found):
+                    found = idx
+            if found is None:
+                break
+            rest = text[found:]
+            if "\n" not in rest and "\r" not in rest:
                 return True
+            start = found + 1
+
         return False
 
     def _flush_safe_partial(self) -> None:
@@ -85,29 +153,36 @@ class SerialDemux:
             return
         # Keep partial shell lines until '\n' so welcome / program output stay intact.
 
+    def _dispatch_log_segment(self, line: str, prefix: str, kind: str) -> None:
+        clean = line.rstrip("\r\n")
+        body = clean[len(prefix) :].strip()
+        if kind == "event":
+            event = self._parse_json(body)
+            if event is not None:
+                self._send_log_event(event)
+            else:
+                self._send_console(line)
+            return
+
+        snapshot = self._parse_json(body)
+        if snapshot is not None:
+            self._send_log_snapshot(snapshot)
+        else:
+            self._send_console(line)
+
     def _dispatch_line(self, raw: bytes) -> None:
         line = raw.decode("utf-8", errors="replace")
         clean = line.rstrip("\r\n")
 
         if clean.startswith(LOG_EVENT_PREFIX):
-            body = clean[len(LOG_EVENT_PREFIX) :].strip()
-            event = self._parse_json(body)
-            if event is not None:
-                self._send_json({"type": "event", "event": event})
-            else:
-                self._send_json({"type": "output", "data": line})
+            self._dispatch_log_segment(line, LOG_EVENT_PREFIX, "event")
             return
 
         if clean.startswith(LOG_SNAPSHOT_PREFIX):
-            body = clean[len(LOG_SNAPSHOT_PREFIX) :].strip()
-            snapshot = self._parse_json(body)
-            if snapshot is not None:
-                self._send_json({"type": "snapshot", "snapshot": snapshot})
-            else:
-                self._send_json({"type": "output", "data": line})
+            self._dispatch_log_segment(line, LOG_SNAPSHOT_PREFIX, "snapshot")
             return
 
-        self._send_json({"type": "output", "data": line})
+        self._send_console(line)
 
     @staticmethod
     def _parse_json(body: str) -> Optional[Dict]:

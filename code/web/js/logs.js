@@ -4,12 +4,17 @@
  */
 const LibertyLogs = (() => {
   const MAX_EVENTS = 500;
-  const REVEAL_MIN_MS = 100;
-  const REVEAL_MAX_MS = 500;
+  /** High-frequency modules kept off the main feed (still on serial / events.jsonl). */
+  const QUIET_MODULES = new Set(['pmm']);
+  /** Gap after one bubble finishes before the next mounts (chat-style cadence). */
+  const REVEAL_GAP_MS = 50;
+  const REVEAL_FALLBACK_MS = 100;
   const STICK_BOTTOM_PX = 80;
 
   let events = [];
-  let revealTimers = [];
+  let revealQueue = [];
+  let revealActive = false;
+  let revealFallbackTimer = null;
   let followLatest = true;
 
   let listEl = null;
@@ -55,25 +60,46 @@ const LibertyLogs = (() => {
     return `中断源 #${n}`;
   }
 
-  function revealStepMs() {
-    return REVEAL_MIN_MS + Math.random() * (REVEAL_MAX_MS - REVEAL_MIN_MS);
-  }
-
   function cancelReveal() {
-    revealTimers.forEach(clearTimeout);
-    revealTimers = [];
+    if (revealFallbackTimer) {
+      clearTimeout(revealFallbackTimer);
+      revealFallbackTimer = null;
+    }
+    revealQueue = [];
+    revealActive = false;
   }
 
-  function scheduleReveal(card, delayMs) {
-    const tid = setTimeout(() => {
-      card.classList.remove('bubble-enter-pending');
-      card.classList.add('bubble-enter');
-      if (followLatest) ensureScrolledToBottom();
-      card.addEventListener('transitionend', () => {
+  function finishRevealStep() {
+    if (!revealActive) return;
+    if (revealFallbackTimer) {
+      clearTimeout(revealFallbackTimer);
+      revealFallbackTimer = null;
+    }
+    revealActive = false;
+    if (followLatest) ensureScrolledToBottom();
+    if (revealQueue.length > 0) {
+      setTimeout(pumpRevealQueue, REVEAL_GAP_MS);
+    }
+  }
+
+  /** Mount and animate one queued log; next waits until this transition ends. */
+  function pumpRevealQueue() {
+    if (revealActive || revealQueue.length === 0 || !listEl) return;
+    revealActive = true;
+
+    const log = revealQueue.shift();
+    const card = mountBubble(log, true);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        card.classList.remove('bubble-enter-pending');
+        card.classList.add('bubble-enter');
         if (followLatest) ensureScrolledToBottom();
-      }, { once: true });
-    }, delayMs);
-    revealTimers.push(tid);
+
+        card.addEventListener('transitionend', finishRevealStep, { once: true });
+        revealFallbackTimer = setTimeout(finishRevealStep, REVEAL_FALLBACK_MS);
+      });
+    });
   }
 
   function row(label, tooltip, icon, value) {
@@ -229,21 +255,23 @@ const LibertyLogs = (() => {
 
   function trimOldest() {
     if (events.length <= MAX_EVENTS) return;
-    events.shift();
+    const removed = events.shift();
     const oldest = listEl?.querySelector('.trap-card');
     oldest?.remove();
+    const pendingIdx = revealQueue.indexOf(removed);
+    if (pendingIdx >= 0) revealQueue.splice(pendingIdx, 1);
   }
 
   function appendBubble(log, { animate = true } = {}) {
     if (!listEl) return;
-    updateBadge();
-    const card = mountBubble(log, animate);
-    if (followLatest) ensureScrolledToBottom();
     if (animate) {
-      scheduleReveal(card, revealStepMs());
-    } else if (followLatest) {
-      ensureScrolledToBottom();
+      revealQueue.push(log);
+      pumpRevealQueue();
+      return;
     }
+    updateBadge();
+    mountBubble(log, false);
+    if (followLatest) ensureScrolledToBottom();
   }
 
   function toggleCard(card) {
@@ -255,9 +283,11 @@ const LibertyLogs = (() => {
 
   function addEvent(log) {
     if (!log || typeof log !== 'object') return;
+    if (QUIET_MODULES.has(log.module)) return;
     events.push(log);
     trimOldest();
-    appendBubble(log);
+    updateBadge();
+    appendBubble(log, { animate: true });
   }
 
   function handleSnapshot(data) {
@@ -286,6 +316,11 @@ const LibertyLogs = (() => {
 
     listEl?.addEventListener('scroll', () => {
       followLatest = isNearBottom();
+    }, { passive: true });
+
+    // 用户主动向上滚时立即暂停自动跟随，避免被新事件拉回底部
+    listEl?.addEventListener('wheel', (e) => {
+      if (e.deltaY < 0) followLatest = false;
     }, { passive: true });
 
     listEl?.addEventListener('click', (e) => {

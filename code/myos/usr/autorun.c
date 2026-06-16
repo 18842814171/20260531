@@ -11,13 +11,13 @@ void debug_autorun_user_and_exit(const char *prog)
 	int st;
 
 	if (!prog || !prog[0]) {
-		uart_puts("autorun: empty program name\n");
+		console_puts("autorun: empty program name\n");
 		machine_poweroff();
 	}
 
-	uart_puts("autorun: ./");
-	uart_puts((char *)prog);
-	uart_putc('\n');
+	console_puts("autorun: ./");
+	console_puts((char *)prog);
+	console_putc('\n');
 
 	fs_chdir("/home/root");
 	st = proc_spawn_exec_wait(prog);

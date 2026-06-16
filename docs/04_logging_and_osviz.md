@@ -6,23 +6,30 @@
 
 ## 1. Design constraint: one serial mux
 
+Kernel output uses two APIs (`include/console_io.h`, `boot/console_io.c`):
+
+| API | Typical callers | Current sink |
+|-----|-----------------|--------------|
+| `console_write` / `console_puts` | Shell, `printf`, `sys_write(1/2)`, UART echo | UART |
+| `log_write` / `log_puts` | `osviz_event`, `osviz_snapshot` | UART (same wire) |
+
+Both still share **one** NS16550 / stdio link. The host (Web demux or `serial_reader.py`) separates streams by line prefix and optional `channel` field — not by a second UART in the guest.
+
+Planned later: redirect `log_write` only to a host pipe, socket, file, or second chardev; callers stay unchanged.
+
 ```text
-LOG_*  →  osviz_event()  →  printf()  →  UART  →  QEMU -serial stdio
-shell  →  uart_putc()      →  printf()  →  UART  →  same byte stream
-login  →  uart_puts()      →  …
-panic  →  printf()         →  …
+console_*  →  UART  →  host  →  terminal pane   (channel: console)
+log_*      →  UART  →  host  →  event bubbles   (channel: log)
 ```
 
-All guest-visible text shares **one** NS16550 / stdio link. There is no separate “log UART” in the current kernel. Separation happens on the **host** (Web demux or `serial_reader.py`), not inside `osviz_k.c`.
-
-A future upgrade (post–acceptance) would use a ring buffer or second chardev; that is **not** the current design.
+A future in-guest ring buffer or second chardev is **not** implemented yet.
 
 ---
 
 ## 2. Kernel: macro-gated logging (my_sim style)
 
 Header: `code/myos/include/osviz_k.h`  
-Implementation: `code/myos/boot/osviz_k.c`
+Implementation: `code/myos/boot/osviz_k.c` (events via `log_puts`)
 
 ### Build switch
 
@@ -119,7 +126,7 @@ Runtime capture directory when using `serial_reader.py`. See `events/README.md`.
 |------|------|-----------------|------------|
 | **Raw QEMU TTY** | `./sh/start_qemu.sh` foreground | Mixed in terminal | Same terminal |
 | **serial_reader.py** | Piped QEMU / offline | `events.jsonl` | stdout |
-| **Web `server.py`** | Browser session | WebSocket `type=event` | WebSocket `type=output` |
+| **Web `server.py`** | Browser session | WebSocket `channel:log` | WebSocket `channel:console` |
 
 ---
 
@@ -129,7 +136,8 @@ Runtime capture directory when using `serial_reader.py`. See `events/README.md`.
 |----------|-----------|
 | `make DEBUG=0` for quiet serial benchmarks | Zero `LOG_*` overhead at call sites |
 | Do not expect file logs from Web alone | Demux does not write `events.jsonl` yet (planned P2) |
-| Parse only **complete lines** starting with `LOG ` | Avoid JSON split across reads |
+| Parse only **complete** `LOG` / `LOG_SNAPSHOT` lines | Avoid split JSON on the wire |
+| Interleaved bytes (`cLOG {…}`) | Host demux scans for markers mid-stream, not only line start |
 | Boot `printf` (e.g. `HEAP_START`) is **not** LOG | Still appears in Web terminal `output` |
 | `LOG_SCHED` with `"via":"kctx"` | Fresh dispatch or resume after `proc_kctx_switch` |
 
@@ -148,4 +156,4 @@ Runtime capture directory when using `serial_reader.py`. See `events/README.md`.
 
 ---
 
-*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*
+*Last aligned with: console/log write split (2026-06-15); Web channel demux; bg script timer poll; shell `kill`/`jobs`.*

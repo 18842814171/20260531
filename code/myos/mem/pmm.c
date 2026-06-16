@@ -87,22 +87,15 @@ void pmm_init(void)
 struct Page *alloc_pages(size_t n)
 {
 	struct Page *p;
-#if DEBUG == 1
-	char buf[128];
-#endif
 
 	spin_lock();
 	p = pmm_manager->alloc_pages(n);
 	spin_unlock();
 
 #if DEBUG == 1
-	if (p) {
-		snprintf(buf, sizeof(buf),
-			 "\"kva\":\"0x%lx\",\"npages\":%d,\"nr_free\":%d,\"algo\":\"%s\"",
-			 (unsigned long)page2kva(p), (int)n, (int)nr_free_pages(),
-			 pmm_manager->name);
-		LOG_PMM("alloc", buf);
-	} else {
+	if (!p) {
+		char buf[128];
+
 		snprintf(buf, sizeof(buf),
 			 "\"npages\":%d,\"nr_free\":%d,\"ok\":false",
 			 (int)n, (int)nr_free_pages());
@@ -115,24 +108,9 @@ struct Page *alloc_pages(size_t n)
 
 void free_pages(struct Page *base, size_t n)
 {
-#if DEBUG == 1
-	char buf[128];
-	void *kva = page2kva(base);
-#endif
-
 	spin_lock();
 	pmm_manager->free_pages(base, n);
 	spin_unlock();
-
-#if DEBUG == 1
-	if (base) {
-		snprintf(buf, sizeof(buf),
-			 "\"kva\":\"0x%lx\",\"npages\":%d,\"nr_free\":%d,\"algo\":\"%s\"",
-			 (unsigned long)kva, (int)n, (int)nr_free_pages(),
-			 pmm_manager->name);
-		LOG_PMM("free", buf);
-	}
-#endif
 }
 
 size_t nr_free_pages(void)

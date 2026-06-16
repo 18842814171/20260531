@@ -61,8 +61,8 @@ static void run_echo(const char *args)
 
 	skip_space(&args);
 	shell_env_expand(args, out, sizeof(out));
-	uart_puts(out);
-	uart_putc('\n');
+	console_puts(out);
+	console_putc('\n');
 }
 
 static int run_sleep_line(const char *args)
@@ -224,7 +224,7 @@ int script_run_bg(const char *path)
 	int pid;
 
 	if (bg_job.active) {
-		uart_puts("bg: one script job already running\n");
+		console_puts("bg: one script job already running\n");
 		return -1;
 	}
 	if (script_load_bg(path) < 0) {
@@ -235,7 +235,7 @@ int script_run_bg(const char *path)
 	script_name_from_path(path, name, sizeof(name));
 	pid = proc_alloc(name, PROC_SHELL_PID);
 	if (pid < 0) {
-		uart_puts("bg: no proc slot\n");
+		console_puts("bg: no proc slot\n");
 		return -1;
 	}
 
@@ -279,6 +279,33 @@ void script_bg_poll(void)
 			return;
 		}
 	}
+}
+
+int script_bg_active(void)
+{
+	return bg_job.active;
+}
+
+int script_bg_pid(void)
+{
+	return bg_job.active ? bg_job.pid : -1;
+}
+
+int script_bg_kill(int pid)
+{
+	if (!bg_job.active)
+		return -1;
+	if (pid >= 0 && bg_job.pid != pid)
+		return -1;
+
+	proc_set_state(bg_job.pid, PROC_UNUSED);
+	shell_env_reap_bg();
+	bg_job.active = 0;
+	bg_job.pid = -1;
+	bg_job.sleep_end = 0;
+	bg_job.pos = 0;
+	bg_job.len = 0;
+	return 0;
 }
 
 int script_bg_describe(int pid, char *buf, int buflen)

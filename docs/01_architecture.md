@@ -270,14 +270,12 @@ Browser (desktop.html)
   │                              └─ bash -lc start_qemu.sh (DEBUG=n)
   │                                     └─ exec qemu-system-riscv64 …
   │
-  ├─ type=output   → terminal pane (shell text only)
-  ├─ type=event    → log bubbles (parsed LOG JSON)
-  └─ type=snapshot → LOG_SNAPSHOT stats card
+  ├─ type=output   → terminal (channel: console)
+  ├─ type=event    → event panel (channel: log)
+  └─ type=snapshot → stats card (channel: log)
 
-Single QEMU serial byte stream; server.py SerialDemux splits by line:
-  LOG {...}        → event
-  LOG_SNAPSHOT …   → snapshot
-  everything else  → output
+Single serial stream; SerialDemux splits by LOG line framing and sets channel.
+Interleaved bytes (shell + LOG in one read) are split before WebSocket send.
 ```
 
 See [05_web_frontend.md](05_web_frontend.md) and [04_logging_and_osviz.md](04_logging_and_osviz.md).
@@ -288,15 +286,13 @@ See [05_web_frontend.md](05_web_frontend.md) and [04_logging_and_osviz.md](04_lo
 
 ```text
 Kernel (DEBUG=1):
-  LOG_BOOT / LOG_TRAP / LOG_PROC / LOG_SCHED / …  [include/osviz_k.h]
-        → osviz_event()               [boot/osviz_k.c]
-        → printf("LOG {...}\n")       → UART
+  LOG_* macros → log_write() → UART (LOG prefix lines)
 
-Host (optional, non-Web):
-  serial_reader.py  →  code/osviz/events/events.jsonl
+Shell / user text:
+  console_write() → UART
 
-Web (current):
-  server.py demux   →  WebSocket typed messages (no file write yet)
+Host Web:
+  SerialDemux → WebSocket with channel console | log
 ```
 
 ---
@@ -315,4 +311,4 @@ Web (current):
 
 ---
 
-*Last aligned with: xv6-style scheduler (Stages 1–4), `proc_user_first_run` + `proc_user_trap_return`, `proc_kctx_switch` dispatch/resume, TTY + AUTORUN `ipc_echo` verified (2026-06-14).*
+*Last aligned with: console/log write split, Web channel demux, bg script timer poll (2026-06-15).*

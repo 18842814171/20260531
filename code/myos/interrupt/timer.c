@@ -141,6 +141,7 @@ void timer_handler(void)
 	_tick++;
 	stats_inc_timer();
 	timer_check();
+	script_bg_poll();
 	timer_load(TIMER_INTERVAL);
 
 	/* Avoid switch_to (CSR writes) while user programs may be active. */

@@ -116,14 +116,14 @@ void start_kernel(void)
 
 	cpu_irq_enable();
 
-	uart_puts("Hello, RVOS!\n");
+	console_puts("Hello, RVOS!\n");
 #ifdef CONFIG_UART_LSR_DIAG
 	uart_lsr_diag();
 #elif defined(CONFIG_AUTORUN)
-	uart_puts("\nSystem ready (AUTORUN=" CONFIG_AUTORUN ").\n");
+	console_puts("\nSystem ready (AUTORUN=" CONFIG_AUTORUN ").\n");
 	debug_autorun_user_and_exit(CONFIG_AUTORUN);
 #else
-	uart_puts("\nSystem ready. Log in at the prompt below.\n");
+	console_puts("\nSystem ready. Log in at the prompt below.\n");
 	uart_rx_flush_deep();
 	console_run();
 #endif

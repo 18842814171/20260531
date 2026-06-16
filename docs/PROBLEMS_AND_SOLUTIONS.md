@@ -350,27 +350,50 @@ The shell path **`proc_spawn_exec_wait` → scheduler dispatch → user executio
 
 **Root cause.** A **single QEMU serial stream** was forwarded verbatim as WebSocket `output`. The frontend tried to strip `LOG` lines after the fact.
 
-**Resolution.** **`SerialDemux` in `code/web/server.py`**: classify complete lines into WebSocket types `event`, `snapshot`, and `output`. Remove client `stripEvents` parsing. See [05_web_frontend.md](05_web_frontend.md).
+**Resolution.** Host **`SerialDemux`** classifies log lines; browser shows them only in the event panel. Client-side strip is a fallback only. See [05_web_frontend.md](05_web_frontend.md).
 
 ---
 
 ### 11.2 Program output missing (e.g. `./hi`) while event bubbles update
 
-**Problem.** User runs `./hi`; right panel shows `proc`/`trap` events but terminal never prints `hi from ./hi`.
+**Problem.** User runs `./hi`; event panel updates but terminal never shows program text.
 
 **Root cause (dual).**
 
-1. **Terminal gate:** Output before **`Welcome, root.`** is dropped. The HTML prompt label is static and misleading.
-2. **Line splitting:** Early demux flushed partial lines without `\n`, splitting `Welcome, root.` across messages so the welcome detector never fired; **`termGateOpen` stayed false** and all post-login `output` was discarded.
+1. **Terminal gate:** Output before **`Welcome, root.`** is dropped.
+2. **Line splitting:** Partial demux flush split the welcome string; gate never opened.
 
-**Resolution.**
-
-- Accumulate **`preShellBuf`** across WebSocket messages until welcome is found.
-- Hold non-LOG partial lines until newline before emitting `output`.
-- Local-echo commands in **`sendCommand`** when the shell is ready.
-
+**Resolution.** Accumulate **`preShellBuf`** until welcome; hold partial non-log lines until `\n`.
 
 ---
+
+### 11.3 Log bytes interleaved with shell output
+
+**Problem.** Terminal shows fragments like `cLOG {"ts_ms":…}` during interactive programs.
+
+**Root cause.** Console and log share one serial stream; reads can split mid-line.
+
+**Resolution.** Demux scans for embedded `LOG` / `LOG_SNAPSHOT` markers, not only line starts. Kernel uses separate **`console_write`** and **`log_write`** APIs (same UART today). Client strips any remaining log segments from console chunks.
+
+---
+
+### 11.4 Web `vi` duplicated lines or broken keys
+
+**Problem.** Insert mode prints each line twice; single keys (`i`, Esc) do not reach the editor.
+
+**Root cause.** Line-at-a-time Web input plus local echo conflicted with guest character echo and `vi`’s raw read loop.
+
+**Resolution.** Remove local echo; auto **raw mode** when `vi` banner appears; single-key send until save or quit.
+
+---
+
+### 11.5 Background script `sleep` never finishes (Web)
+
+**Problem.** `. sh01.sh &` prints first lines then stalls; last `echo` after `sleep 20` missing; `ps` shows pid stuck.
+
+**Root cause.** With UART IRQ, shell blocked in `proc_block` without calling **`script_bg_poll`**; sleep expiry was never checked.
+
+**Resolution.** Call **`script_bg_poll`** from timer handler and before UART block; shell commands **`jobs`** and **`kill [pid]`** to inspect or stop.
 
 ## 12. User process scheduling (`proc_sched`)
 

@@ -34,17 +34,17 @@ void machine_poweroff(void)
 {
 	shutdown_quiesce();
 
-	uart_puts("\nShutting down myos...\n");
+	console_puts("\nShutting down myos...\n");
 
 #ifdef CONFIG_OPENSBI
 	LOG_BOOT("poweroff", "\"action\":\"sbi_shutdown\"");
 	sbi_shutdown();
 #endif
 
-	uart_puts("(SBI shutdown unavailable, trying QEMU test device)\n");
+	console_puts("(SBI shutdown unavailable, trying QEMU test device)\n");
 	qemu_test_poweroff();
 
-	uart_puts("Poweroff failed; halted.\n");
+	console_puts("Poweroff failed; halted.\n");
 	for (;;)
 		asm volatile("wfi");
 }

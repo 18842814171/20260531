@@ -54,15 +54,23 @@ int osviz_event(const char *module, const char *event, const char *json_data)
 		return -1;
 
 	if (json_data && json_data[0] != '\0') {
-		printf("%s{\"ts_ms\":%d,\"module\":\"%s\",\"event\":\"%s\","
-		       "\"hart\":%d,\"data\":{%s}}\n",
-		       LOG_PREFIX_EVENT, (int)ts_ms, module, event,
-		       (int)hart, json_data);
+		char line[640];
+
+		snprintf(line, sizeof(line),
+			 "%s{\"ts_ms\":%d,\"module\":\"%s\",\"event\":\"%s\","
+			 "\"hart\":%d,\"data\":{%s}}\n",
+			 LOG_PREFIX_EVENT, (int)ts_ms, module, event,
+			 (int)hart, json_data);
+		log_puts(line);
 	} else {
-		printf("%s{\"ts_ms\":%d,\"module\":\"%s\",\"event\":\"%s\","
-		       "\"hart\":%d}\n",
-		       LOG_PREFIX_EVENT, (int)ts_ms, module, event,
-		       (int)hart);
+		char line[256];
+
+		snprintf(line, sizeof(line),
+			 "%s{\"ts_ms\":%d,\"module\":\"%s\",\"event\":\"%s\","
+			 "\"hart\":%d}\n",
+			 LOG_PREFIX_EVENT, (int)ts_ms, module, event,
+			 (int)hart);
+		log_puts(line);
 	}
 
 	return 0;
@@ -86,7 +94,12 @@ int osviz_snapshot(void)
 		 (int)g_irq_stats.sw_irq, (int)g_irq_stats.ext_irq,
 		 (int)g_irq_stats.ecall_count, (int)g_irq_stats.page_fault_count);
 
-	printf("%s{%s}\n", LOG_PREFIX_SNAPSHOT, buf);
+	{
+		char line[512];
+
+		snprintf(line, sizeof(line), "%s{%s}\n", LOG_PREFIX_SNAPSHOT, buf);
+		log_puts(line);
+	}
 	return 0;
 }
 

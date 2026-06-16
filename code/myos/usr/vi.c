@@ -39,26 +39,26 @@ static void buf_shift_left(char *buf, int pos, int len)
 
 static void vi_show_file(const char *path, const char *buf, int len)
 {
-	uart_puts("\n-- vi ");
-	uart_puts((char *)path);
-	uart_puts(" --\n");
+	console_puts("\n-- vi ");
+	console_puts((char *)path);
+	console_puts(" --\n");
 	if (len > 0) {
-		uart_puts(buf);
+		console_puts(buf);
 		if (buf[len - 1] != '\n')
-			uart_putc('\n');
+			console_putc('\n');
 	} else {
-		uart_puts("[New file]\n");
+		console_puts("[New file]\n");
 	}
 }
 
 static void vi_show_normal_help(void)
 {
-	uart_puts("-- NORMAL --  i:insert  a:append  :wq save  :q! quit\n");
+	console_puts("-- NORMAL --  i:insert  a:append  :wq save  :q! quit\n");
 }
 
 static void vi_show_insert_help(void)
 {
-	uart_puts("-- INSERT --  Esc: normal mode\n");
+	console_puts("-- INSERT --  Esc: normal mode\n");
 }
 
 static int vi_read_key(void)
@@ -75,30 +75,30 @@ static int vi_read_colon_cmd(char *cmd, int maxlen)
 	int i = 0;
 	int c;
 
-	uart_putc(':');
+	console_putc(':');
 	while (i < maxlen - 1) {
 		c = vi_read_key();
 		if (c == '\r' || c == '\n')
 			break;
 		if (c == 27) {
 			cmd[0] = '\0';
-			uart_putc('\n');
+			console_putc('\n');
 			return -1;
 		}
 		if (c == 8 || c == 127) {
 			if (i > 0) {
 				i--;
-				uart_puts("\b \b");
+				console_puts("\b \b");
 			}
 			continue;
 		}
 		if (c >= 32 && c < 127) {
 			cmd[i++] = (char)c;
-			uart_putc((char)c);
+			console_putc((char)c);
 		}
 	}
 	cmd[i] = '\0';
-	uart_putc('\n');
+	console_putc('\n');
 	return 0;
 }
 
@@ -111,7 +111,7 @@ static int vi_insert_char(char *buf, int *len, int *cur, int cap, int c)
 	(*len)++;
 	(*cur)++;
 	buf[*len] = '\0';
-	uart_putc((char)c);
+	console_putc((char)c);
 	return 0;
 }
 
@@ -123,7 +123,7 @@ static void vi_delete_before(char *buf, int *len, int *cur)
 	(*len)--;
 	(*cur)--;
 	buf[*len] = '\0';
-	uart_puts("\b \b");
+	console_puts("\b \b");
 }
 
 static int vi_handle_cmd(const char *cmd)
@@ -131,10 +131,10 @@ static int vi_handle_cmd(const char *cmd)
 	if (str_eq(cmd, "wq"))
 		return 1;
 	if (str_eq(cmd, "q!"))
-		return -1;
+		return -2;
 	if (cmd[0] == '\0')
 		return 0;
-	uart_puts("vi: unknown command (use :wq or :q!)\n");
+	console_puts("vi: unknown command (use :wq or :q!)\n");
 	return 0;
 }
 
@@ -181,8 +181,11 @@ int vi_edit(const char *path)
 				rc = vi_handle_cmd(cmd);
 				if (rc == 1)
 					break;
-				if (rc < 0)
+				if (rc < 0) {
+					if (rc == -2)
+						console_puts("vi: quit\n");
 					return -1;
+				}
 				vi_show_normal_help();
 				continue;
 			}
@@ -192,13 +195,13 @@ int vi_edit(const char *path)
 		/* INSERT */
 		if (c == 27) {
 			mode = VI_NORMAL;
-			uart_putc('\n');
+			console_putc('\n');
 			vi_show_normal_help();
 			continue;
 		}
 		if (c == '\r' || c == '\n') {
 			if (vi_insert_char(buf, &len, &cur, sizeof(buf), '\n') < 0)
-				uart_puts("\nvi: buffer full\n");
+				console_puts("\nvi: buffer full\n");
 			continue;
 		}
 		if (c == 8 || c == 127) {
@@ -207,14 +210,14 @@ int vi_edit(const char *path)
 		}
 		if (c >= 32 && c < 127) {
 			if (vi_insert_char(buf, &len, &cur, sizeof(buf), c) < 0)
-				uart_puts("\nvi: buffer full\n");
+				console_puts("\nvi: buffer full\n");
 		}
 	}
 
 	if (fs_write_file(path, buf, len, 1) < 0) {
-		uart_puts("vi: write failed\n");
+		console_puts("vi: write failed\n");
 		return -1;
 	}
-	uart_puts("vi: saved\n");
+	console_puts("vi: saved\n");
 	return 0;
 }
