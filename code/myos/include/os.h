@@ -30,6 +30,7 @@ extern void uart_hw_test(void);
 /* printf */
 extern int  printf(const char* s, ...);
 extern int  snprintf(char *out, size_t n, const char *s, ...);
+extern int  vsnprintf(char *out, size_t n, const char *s, va_list vl);
 extern void panic(char *s);
 
 /* memory management (5.1 pmm_manager 框架) */

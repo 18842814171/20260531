@@ -327,6 +327,16 @@ static void cmd_touch(const char *path)
 		console_puts("touch: failed\n");
 }
 
+static void cmd_mkdir(const char *path)
+{
+	if (!path || !path[0]) {
+		console_puts("usage: mkdir <dir>\n");
+		return;
+	}
+	if (fs_mkdir(path) < 0)
+		console_puts("mkdir: failed\n");
+}
+
 static reg_t shell_irq_save(void)
 {
 	reg_t s = r_sstatus();
@@ -482,7 +492,8 @@ static void print_help(void)
 {
 	console_puts("Shell commands (Linux-style):\n");
 	console_puts("  cd [dir]        pwd             ls [dir]\n");
-	console_puts("  cat <file>      touch <file>      vi <file> (i/Esc/:wq)\n");
+	console_puts("  cat <file>      mkdir <dir>     touch <file>\n");
+	console_puts("  vi <file> (i/Esc/:wq)\n");
 	console_puts("  echo ...        echo ... > f      echo ... >> f\n");
 	console_puts("  export k=v      k=v               . script.sh [&]\n");
 	console_puts("  ./program [&]   sh script.sh [&]\n");
@@ -540,6 +551,7 @@ static void shell_loop(void)
 
 		script_bg_poll();
 		uart_rx_flush();
+		console_putc('\n');
 		snprintf(prompt, sizeof(prompt), "root@%s$ ", fs_getcwd());
 		if (uart_prompt_and_read_line(prompt, line, LINE_MAX) < 0)
 			continue;
@@ -573,6 +585,10 @@ static void shell_loop(void)
 			cmd_cat(skip_word(line + 3));
 		} else if (str_prefix(line, "touch ")) {
 			cmd_touch(skip_word(line + 5));
+		} else if (str_prefix(line, "mkdir ")) {
+			cmd_mkdir(skip_word(line + 5));
+		} else if (str_eq(line, "mkdir")) {
+			cmd_mkdir(NULL);
 		} else if (str_prefix(line, "vi ")) {
 			vi_edit(skip_word(line + 2));
 		} else if (str_prefix(line, "echo ")) {

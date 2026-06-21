@@ -143,6 +143,13 @@ int snprintf(char *out, size_t n, const char *s, ...)
 	return res;
 }
 
+int vsnprintf(char *out, size_t n, const char *s, va_list vl)
+{
+	if (!out || n == 0)
+		return 0;
+	return _vsnprintf(out, n, s, vl);
+}
+
 void panic(char *s)
 {
 	printf("panic: ");

@@ -1,7 +1,9 @@
 #include "os.h"
 #include "proc.h"
 #include "proc_user.h"
+#include "osviz_k.h"
 #include "vm.h"
+#include <stdio.h>
 
 extern reg_t kernel_gp_value;
 
@@ -141,8 +143,11 @@ void proc_set_state(int pid, enum proc_state st)
 				procs[i].kctx_asleep = 0;
 				proc_user_diag_reset(pid);
 				if (procs[i].pagetable) {
-					proc_printf("destroy vm pid=%d pt=%p\n",
-					       pid, (void *)procs[i].pagetable);
+					char d[64];
+
+					snprintf(d, sizeof(d), "\"pid\":%d,\"pt\":\"0x%lx\"",
+						 pid, (unsigned long)procs[i].pagetable);
+					LOG_PROC("vm_destroy", d);
 					vm_destroy(procs[i].pagetable);
 					procs[i].pagetable = NULL;
 				}
@@ -286,7 +291,12 @@ void proc_mark_zombie(int pid)
 
 	if (slot >= 0)
 		ppid = procs[slot].ppid;
-	proc_printf("[zombie] pid=%d parent=%d\n", pid, ppid);
+	{
+		char d[48];
+
+		snprintf(d, sizeof(d), "\"pid\":%d,\"parent\":%d", pid, ppid);
+		LOG_PROC("zombie", d);
+	}
 	proc_set_state(pid, PROC_ZOMBIE);
 }
 

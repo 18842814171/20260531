@@ -24,7 +24,6 @@
     if (statusText) statusText.textContent = message;
     if (inputEl) {
       inputEl.disabled = !online;
-      inputEl.placeholder = online ? '可直接在 QEMU 里输入（左侧点击文件无需敲命令）' : '等待连接...';
     }
   }
 
@@ -50,7 +49,9 @@
     });
   });
 
-  LibertyLogs.init({
+  const LogPanel = typeof LibertyLogsTree !== 'undefined' ? LibertyLogsTree : LibertyLogs;
+
+  LogPanel.init({
     listEl: $('#log-bubble-list'),
     emptyEl: $('#log-bubble-empty'),
     badgeEl: $('#log-count-badge'),
@@ -59,6 +60,7 @@
   LibertyTerminal.init({
     outputEl,
     inputEl,
+    promptLabelEl: $('#console-prompt'),
     onStatus: setConnectionStatus,
     onReady: () => setConnectionStatus(true, 'QEMU 就绪'),
   });
@@ -77,7 +79,7 @@
 
   $('#btn-clear')?.addEventListener('click', () => {
     LibertyTerminal.clear();
-    LibertyLogs.clear();
+    LogPanel.clear();
   });
   $('#btn-reconnect')?.addEventListener('click', () => LibertyTerminal.connect());
   $('#btn-logout')?.addEventListener('click', () => {

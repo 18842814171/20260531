@@ -1,20 +1,18 @@
 /**
- * LibertyOS — kernel LOG bubbles (feed via WebSocket demux, not console regex)
- *   LibertyLogs.addEvent(log)     ← type:event, channel:log
- *   LibertyLogs.handleSnapshot()  ← type:snapshot, channel:log
- *   LibertyLogs.addNote(text)     ← type:note, channel:log (proc_printf / LOG_NOTE)
- * User program stdout stays on channel:console → terminal only.
+ * LibertyOS — session-grouped log panel (experimental; LIBERTY_LOG_UI=session)
+ * One bubble per command; expand for nested LOG events.
  */
-const LibertyLogs = (() => {
-  const MAX_EVENTS = 500;
-  /** High-frequency modules kept off the main feed (still on serial / events.jsonl). */
-  const QUIET_MODULES = new Set(['pmm']);
-  /** Gap after one bubble finishes before the next mounts (chat-style cadence). */
-  const REVEAL_GAP_MS = 50;
-  const REVEAL_FALLBACK_MS = 100;
+const LibertyLogsSession = (() => {
+  const MAX_SESSIONS = 80;
+  const REVEAL_GAP_MS = 30;
+  const REVEAL_FALLBACK_MS = 80;
   const STICK_BOTTOM_PX = 80;
 
-  let events = [];
+  let sessions = [];
+  let activeSession = null;
+  let bootPending = true;
+  let sessionIdSeq = 1;
+
   let revealQueue = [];
   let revealActive = false;
   let revealFallbackTimer = null;
@@ -63,6 +61,55 @@ const LibertyLogs = (() => {
     return `中断源 #${n}`;
   }
 
+  function sessionKindClass(kind) {
+    if (kind === 'boot') return 'session-card--boot';
+    if (kind === 'ipc_echo') return 'session-card--ipc';
+    if (kind === 'background') return 'session-card--bg';
+    return 'session-card--cmd';
+  }
+
+  function eventKindClass(log) {
+    const mod = log.module;
+    const ev = log.event;
+    if (mod === 'trap' && ev === 'enter') return 'card-enter';
+    if (mod === 'trap' && ev === 'leave') return 'card-leave';
+    if (mod === 'trap-diag') return 'card-diag';
+    if (mod === 'boot') return 'card-boot';
+    return 'card-default';
+  }
+
+  function eventSummary(log) {
+    const mod = log.module;
+    const ev = log.event;
+    const d = log.data || {};
+    if (mod === 'trap' && ev === 'enter') {
+      const code = d.code != null ? explainIrqCode(d.code) : '';
+      return `trap · enter${d.pid != null ? ` pid=${d.pid}` : ''}${code ? ` · ${code}` : ''}`;
+    }
+    if (mod === 'trap' && ev === 'leave') return 'trap · leave';
+    if (mod === 'trap-diag' && ev === 'leave_handler') return 'trap-diag · leave_handler';
+    if (mod === 'proc' && ev === 'exit') return `proc · exit${d.pid != null ? ` pid=${d.pid}` : ''}`;
+    if (mod === 'proc' && ev === 'fault_kill') return `proc · fault_kill pid=${d.pid ?? '?'}`;
+    if (mod === 'sched' && ev === 'run') return `sched · run pid=${d.pid ?? '?'}`;
+    if (mod === 'pmm') return `pmm · ${ev}`;
+    if (mod === 'sem') return `sem · ${ev}`;
+    if (mod === 'irq') return `irq · ${ev}`;
+    return `${mod} · ${ev}`;
+  }
+
+  function eventIcon(log) {
+    const mod = log.module;
+    const ev = log.event;
+    if (mod === 'trap' && ev === 'enter') return 'bi-lightning-charge-fill';
+    if (mod === 'trap' && ev === 'leave') return 'bi-box-arrow-right';
+    if (mod === 'trap-diag') return 'bi-clipboard2-pulse';
+    if (mod === 'boot') return 'bi-power';
+    if (mod === 'proc') return 'bi-cpu';
+    if (mod === 'pmm') return 'bi-memory';
+    if (mod === 'sched') return 'bi-arrow-left-right';
+    return 'bi-journal-text';
+  }
+
   function cancelReveal() {
     if (revealFallbackTimer) {
       clearTimeout(revealFallbackTimer);
@@ -85,13 +132,12 @@ const LibertyLogs = (() => {
     }
   }
 
-  /** Mount and animate one queued log; next waits until this transition ends. */
   function pumpRevealQueue() {
     if (revealActive || revealQueue.length === 0 || !listEl) return;
     revealActive = true;
 
-    const log = revealQueue.shift();
-    const card = mountBubble(log, true);
+    const session = revealQueue.shift();
+    const card = mountSession(session, true);
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -205,30 +251,58 @@ const LibertyLogs = (() => {
       + cardClose();
   }
 
-  function renderNote(text) {
-    const t = String(text ?? '').trim();
-    return `<div class="trap-card card-note">
-      <div class="card-header card-header--clickable" role="button" tabindex="0" aria-expanded="false">
-        <div class="event-tag">
-          <i class="bi bi-terminal event-icon"></i>
-          <span class="card-summary">${esc(t)}</span>
-        </div>
-        <div class="card-header__meta">
-          <i class="bi bi-chevron-down card-chevron" aria-hidden="true"></i>
-        </div>
-      </div>
-      <div class="card-body"><div class="note-detail">${esc(t)}</div></div>
-    </div>`;
-  }
-
   function renderBubble(log) {
-    if (log && log.kind === 'note') return renderNote(log.text);
     const mod = log.module;
     const ev = log.event;
     if (mod === 'trap' && ev === 'enter') return renderTrapEnter(log);
     if (mod === 'trap' && ev === 'leave') return renderTrapLeave(log);
     if (mod === 'trap-diag' && ev === 'leave_handler') return renderTrapDiagLeave(log);
     return renderGeneric(log);
+  }
+
+  function renderSessionEvents(session) {
+    let html = '';
+    session.notes.forEach((note) => {
+      html += `<div class="session-note"><i class="bi bi-terminal"></i> ${esc(note)}</div>`;
+    });
+    session.events.forEach((log, idx) => {
+      const kind = eventKindClass(log);
+      html += `<div class="session-event ${kind}" data-event-idx="${idx}">
+        <div class="session-event__header card-header--clickable" role="button" tabindex="0" aria-expanded="false">
+          <div class="event-tag">
+            <i class="bi ${eventIcon(log)} event-icon"></i>
+            <span class="card-summary">${esc(eventSummary(log))}</span>
+          </div>
+          <div class="card-header__meta">
+            <span class="timestamp"><i class="bi bi-clock"></i> ${esc(log.ts_ms)} ms</span>
+            <i class="bi bi-chevron-down card-chevron" aria-hidden="true"></i>
+          </div>
+        </div>
+        <div class="session-event__detail">${renderBubble(log)}</div>
+      </div>`;
+    });
+    if (!html) {
+      html = '<div class="session-empty">本段无内核 LOG 事件</div>';
+    }
+    return html;
+  }
+
+  function renderSession(session) {
+    const count = session.events.length + session.notes.length;
+    const kindCls = sessionKindClass(session.kind);
+    return `<div class="session-card ${kindCls}" data-session-id="${session.id}">
+      <div class="session-card__header card-header--clickable" role="button" tabindex="0" aria-expanded="false">
+        <div class="event-tag">
+          <i class="bi bi-collection event-icon"></i>
+          <span class="card-summary">事件：${esc(session.title)}</span>
+        </div>
+        <div class="card-header__meta">
+          <span class="log-badge">${count} 条</span>
+          <i class="bi bi-chevron-down card-chevron" aria-hidden="true"></i>
+        </div>
+      </div>
+      <div class="session-card__body">${renderSessionEvents(session)}</div>
+    </div>`;
   }
 
   function isNearBottom() {
@@ -255,18 +329,19 @@ const LibertyLogs = (() => {
   }
 
   function updateBadge() {
-    if (badgeEl) badgeEl.textContent = String(events.length);
-    if (emptyEl) emptyEl.classList.toggle('hidden', events.length > 0);
+    if (badgeEl) badgeEl.textContent = String(sessions.length);
+    const hasVisible = sessions.length > 0 || revealQueue.length > 0;
+    if (emptyEl) emptyEl.classList.toggle('hidden', hasVisible);
   }
 
   function clearCards() {
     if (!listEl) return;
-    listEl.querySelectorAll('.trap-card').forEach((el) => el.remove());
+    listEl.querySelectorAll('.session-card').forEach((el) => el.remove());
   }
 
-  function mountBubble(log, animate) {
+  function mountSession(session, animate) {
     const wrapper = document.createElement('div');
-    wrapper.innerHTML = renderBubble(log);
+    wrapper.innerHTML = renderSession(session);
     const card = wrapper.firstElementChild;
     if (animate) card.classList.add('bubble-enter-pending');
     listEl.appendChild(card);
@@ -274,50 +349,75 @@ const LibertyLogs = (() => {
   }
 
   function trimOldest() {
-    if (events.length <= MAX_EVENTS) return;
-    const removed = events.shift();
-    const oldest = listEl?.querySelector('.trap-card');
+    if (sessions.length <= MAX_SESSIONS) return;
+    sessions.shift();
+    const oldest = listEl?.querySelector('.session-card');
     oldest?.remove();
-    const pendingIdx = revealQueue.indexOf(removed);
-    if (pendingIdx >= 0) revealQueue.splice(pendingIdx, 1);
   }
 
-  function appendBubble(log, { animate = true } = {}) {
-    if (!listEl) return;
-    if (animate) {
-      revealQueue.push(log);
-      pumpRevealQueue();
-      return;
+  function ensureActiveSession(title, kind) {
+    if (activeSession) return activeSession;
+    if (bootPending) {
+      activeSession = {
+        id: sessionIdSeq++,
+        title: 'boot',
+        kind: 'boot',
+        events: [],
+        notes: [],
+      };
+      return activeSession;
     }
-    updateBadge();
-    mountBubble(log, false);
-    if (followLatest) ensureScrolledToBottom();
+    activeSession = {
+      id: sessionIdSeq++,
+      title: title || 'kernel',
+      kind: kind || 'command',
+      events: [],
+      notes: [],
+    };
+    return activeSession;
   }
 
-  function toggleCard(card) {
-    const expanded = card.classList.toggle('trap-card--expanded');
-    const header = card.querySelector('.card-header--clickable');
-    if (header) header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    if (followLatest) ensureScrolledToBottom();
+  function beginSession(title, kind = 'command') {
+    if (activeSession) endSession();
+    activeSession = {
+      id: sessionIdSeq++,
+      title: title || 'command',
+      kind,
+      events: [],
+      notes: [],
+    };
+  }
+
+  function endSession(titleOverride) {
+    if (!activeSession) return;
+    if (titleOverride) activeSession.title = titleOverride;
+    const session = activeSession;
+    activeSession = null;
+    sessions.push(session);
+    trimOldest();
+    revealQueue.push(session);
+    pumpRevealQueue();
+    updateBadge();
+  }
+
+  function onShellReady() {
+    bootPending = false;
+    if (activeSession && activeSession.kind === 'boot') {
+      endSession();
+    }
+  }
+
+  function noteConsoleLine(line) {
+    const text = String(line ?? '').trim();
+    if (!text) return;
+    const session = ensureActiveSession('kernel', 'misc');
+    session.notes.push(text);
   }
 
   function addEvent(log) {
     if (!log || typeof log !== 'object') return;
-    if (QUIET_MODULES.has(log.module)) return;
-    events.push(log);
-    trimOldest();
-    updateBadge();
-    appendBubble(log, { animate: true });
-  }
-
-  function addNote(text) {
-    const t = String(text ?? '').trim();
-    if (!t) return;
-    const entry = { kind: 'note', text: t, ts_ms: Date.now() % 100000 };
-    events.push(entry);
-    trimOldest();
-    updateBadge();
-    appendBubble(entry, { animate: true });
+    const session = ensureActiveSession();
+    session.events.push(log);
   }
 
   function handleSnapshot(data) {
@@ -333,10 +433,27 @@ const LibertyLogs = (() => {
 
   function clear() {
     cancelReveal();
-    events = [];
+    sessions = [];
+    activeSession = null;
+    bootPending = true;
+    sessionIdSeq = 1;
     followLatest = true;
     clearCards();
     updateBadge();
+  }
+
+  function toggleSession(card) {
+    const expanded = card.classList.toggle('session-card--expanded');
+    const header = card.querySelector('.session-card__header');
+    if (header) header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    if (followLatest) ensureScrolledToBottom();
+  }
+
+  function toggleSessionEvent(item) {
+    const expanded = item.classList.toggle('session-event--expanded');
+    const header = item.querySelector('.session-event__header');
+    if (header) header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    if (followLatest) ensureScrolledToBottom();
   }
 
   function init(opts) {
@@ -348,29 +465,54 @@ const LibertyLogs = (() => {
       followLatest = isNearBottom();
     }, { passive: true });
 
-    // 用户主动向上滚时立即暂停自动跟随，避免被新事件拉回底部
     listEl?.addEventListener('wheel', (e) => {
       if (e.deltaY < 0) followLatest = false;
     }, { passive: true });
 
     listEl?.addEventListener('click', (e) => {
-      const header = e.target.closest('.card-header--clickable');
-      if (!header || !listEl.contains(header)) return;
-      const card = header.closest('.trap-card');
-      if (card) toggleCard(card);
+      const eventHeader = e.target.closest('.session-event__header');
+      if (eventHeader && listEl.contains(eventHeader)) {
+        e.stopPropagation();
+        const item = eventHeader.closest('.session-event');
+        if (item) toggleSessionEvent(item);
+        return;
+      }
+      const sessionHeader = e.target.closest('.session-card__header');
+      if (sessionHeader && listEl.contains(sessionHeader)) {
+        const card = sessionHeader.closest('.session-card');
+        if (card) toggleSession(card);
+      }
     });
 
     listEl?.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
-      const header = e.target.closest('.card-header--clickable');
-      if (!header || !listEl.contains(header)) return;
-      e.preventDefault();
-      const card = header.closest('.trap-card');
-      if (card) toggleCard(card);
+      const eventHeader = e.target.closest('.session-event__header');
+      if (eventHeader && listEl.contains(eventHeader)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const item = eventHeader.closest('.session-event');
+        if (item) toggleSessionEvent(item);
+        return;
+      }
+      const sessionHeader = e.target.closest('.session-card__header');
+      if (sessionHeader && listEl.contains(sessionHeader)) {
+        e.preventDefault();
+        const card = sessionHeader.closest('.session-card');
+        if (card) toggleSession(card);
+      }
     });
 
     updateBadge();
   }
 
-  return { init, clear, addEvent, addNote, handleSnapshot };
+  return {
+    init,
+    clear,
+    addEvent,
+    handleSnapshot,
+    beginSession,
+    endSession,
+    onShellReady,
+    noteConsoleLine,
+  };
 })();

@@ -65,6 +65,17 @@ static void run_echo(const char *args)
 	console_putc('\n');
 }
 
+static void run_mkdir(const char *args)
+{
+	skip_space(&args);
+	if (!*args) {
+		printf("mkdir: missing operand\n");
+		return;
+	}
+	if (fs_mkdir(args) < 0)
+		printf("mkdir: failed\n");
+}
+
 static int run_sleep_line(const char *args)
 {
 	int sec = 0;
@@ -105,6 +116,10 @@ static int run_one_line(char *line)
 	}
 	if (line_eq(line, "sleep"))
 		return run_sleep_line(line + 5);
+	if (line_eq(line, "mkdir")) {
+		run_mkdir(line + 5);
+		return SCRIPT_STEP_OK;
+	}
 	printf("sh: unsupported: %s\n", line);
 	return SCRIPT_STEP_OK;
 }

@@ -1,9 +1,10 @@
 /**
- * LibertyOS — WebSocket PTY terminal
- * console → type:output channel:console | LOG → type:event|snapshot|note channel:log → LibertyLogs
+ * LibertyOS — WebSocket PTY terminal (session log UI)
+ * Pairs with logs_session.js: command-scoped bubbles, host channel demux only.
  */
-const LibertyTerminal = (() => {
+const LibertyTerminalSession = (() => {
   const reconnectDelayMs = 3000;
+  const Logs = () => (typeof LibertyLogsSession !== 'undefined' ? LibertyLogsSession : null);
 
   let ws = null;
   let reconnectTimer = null;
@@ -15,36 +16,14 @@ const LibertyTerminal = (() => {
   let preShellBuf = '';
   let rawInputMode = false;
   let rawDetectBuf = '';
+  let terminalLineHold = '';
+  let ipcEchoMode = false;
+  let ipcInputBuf = '';
+  let viSessionActive = false;
+  let awaitingPrompt = false;
 
   const SHELL_WELCOME = 'Welcome, root.';
   const SHELL_PROMPT_RE = /^root@[^\n]*\$\s*$/;
-  const SHELL_PROMPT_CAPTURE = /^(root@[^\n]*\$)\s*$/;
-
-  let promptLabelEl = null;
-
-  function syncPromptLabel(line) {
-    const m = String(line || '').replace(/\r$/, '').match(SHELL_PROMPT_CAPTURE);
-    if (m && promptLabelEl) promptLabelEl.textContent = `${m[1]} `;
-  }
-
-  function logs() {
-    return typeof LibertyLogsTree !== 'undefined' ? LibertyLogsTree : LibertyLogs;
-  }
-
-  function processTerminalChunk(chunk) {
-    if (!chunk) return chunk;
-    let out = '';
-    const parts = chunk.split('\n');
-    for (let i = 0; i < parts.length; i++) {
-      const line = parts[i].replace(/\r$/, '');
-      if (SHELL_PROMPT_RE.test(line)) {
-        syncPromptLabel(line);
-        if (typeof LibertyLogsTree !== 'undefined') LibertyLogsTree.onPrompt();
-      }
-      out += i < parts.length - 1 ? `${line}\n` : line;
-    }
-    return out;
-  }
 
   function setInputPlaceholder() {
     if (!inputEl) return;
@@ -81,8 +60,13 @@ const LibertyTerminal = (() => {
 
   function maybeUpdateRawInput(text) {
     if (!text) return;
+    const L = Logs();
     if (/-- vi .+ --/.test(text) || /-- NORMAL --/.test(text) || /-- INSERT --/.test(text)) {
       enableRawInput();
+      if (!viSessionActive && L) {
+        L.beginSession('vi', 'command');
+        viSessionActive = true;
+      }
     }
     if (/\[sem\] create empty=/.test(text) || /producer pid=\d+ start/.test(text)) {
       enableRawInput();
@@ -92,11 +76,69 @@ const LibertyTerminal = (() => {
     }
     if (/vi: saved/.test(text) || /vi: write failed/.test(text) || /vi: quit/.test(text)) {
       disableRawInput();
+      if (viSessionActive && L) {
+        L.endSession();
+        viSessionActive = false;
+        awaitingPrompt = true;
+      }
     }
     if (/\[parent\] ipc_echo done/.test(text)) {
       disableRawInput();
-      if (typeof LibertyLogsTree !== 'undefined') LibertyLogsTree.onExplicitEnd();
+      ipcEchoMode = false;
+      awaitingPrompt = true;
+      if (L) L.endSession();
     }
+  }
+
+  function processTerminalChunk(chunk) {
+    if (!chunk) return '';
+    let s = terminalLineHold + chunk;
+    terminalLineHold = '';
+    let out = '';
+    let i = 0;
+
+    while (i < s.length) {
+      const nl = s.indexOf('\n', i);
+      if (nl < 0) {
+        terminalLineHold = s.slice(i);
+        break;
+      }
+      const line = s.slice(i, nl).replace(/\r$/, '');
+      i = nl + 1;
+
+      if (SHELL_PROMPT_RE.test(line)) {
+        const L = Logs();
+        if (awaitingPrompt && shellReady && L) {
+          L.endSession();
+          awaitingPrompt = false;
+        }
+        out += `${line}\n`;
+        continue;
+      }
+      out += `${line}\n`;
+    }
+    return out;
+  }
+
+  function noteIpcInput(ch) {
+    if (!ipcEchoMode || ch === '\n') return;
+    if (ch.length === 1 && ch >= ' ' && ch <= '~') ipcInputBuf += ch;
+  }
+
+  function finishIpcInteraction() {
+    if (!ipcEchoMode) return false;
+    const input = ipcInputBuf;
+    ipcInputBuf = '';
+    const L = Logs();
+    if (L) {
+      L.endSession(`ipc_echo  输入：${input || '(空)'}`);
+      if (input !== 'q' && input !== 'Q') L.beginSession('ipc_echo', 'ipc_echo');
+    }
+    if (input === 'q' || input === 'Q') {
+      ipcEchoMode = false;
+      awaitingPrompt = true;
+    }
+    return true;
   }
 
   function keyToWire(e) {
@@ -151,15 +193,16 @@ const LibertyTerminal = (() => {
     const tail = idx >= 0 ? preShellBuf.slice(idx) : preShellBuf;
     if (tail) appendOutput(tail);
 
-    if (typeof LibertyLogsTree !== 'undefined') LibertyLogsTree.onShellReady();
+    const L = Logs();
+    if (L) L.onShellReady();
     if (onReady) onReady();
   }
 
   function appendTerminalOutput(forTerm) {
     if (!forTerm) return;
     if (!termGateOpen) return;
+    feedRawDetect(forTerm);
     const terminal = processTerminalChunk(forTerm);
-    feedRawDetect(terminal);
     if (terminal) appendOutput(terminal);
   }
 
@@ -232,8 +275,17 @@ const LibertyTerminal = (() => {
   }
 
   function sendCommand(cmd) {
-    if (/\bipc_echo\b/.test(cmd)) enableRawInput();
-    if (typeof LibertyLogsTree !== 'undefined') LibertyLogsTree.beginCommand(cmd);
+    const trimmed = cmd.trim();
+    const L = Logs();
+    if (/\bipc_echo\b/.test(cmd)) {
+      enableRawInput();
+      ipcEchoMode = true;
+      ipcInputBuf = '';
+      if (L) L.beginSession('ipc_echo', 'ipc_echo');
+    } else if (!viSessionActive && L) {
+      L.beginSession(trimmed, trimmed.endsWith('&') ? 'background' : 'command');
+      awaitingPrompt = true;
+    }
     const line = cmd.endsWith('\n') ? cmd : cmd + '\n';
     return sendInput(line);
   }
@@ -278,25 +330,38 @@ const LibertyTerminal = (() => {
 
     if (data.type === 'event') {
       if (data.channel && data.channel !== 'log') return;
-      if (data.event) logs().addEvent(data.event);
+      const L = Logs();
+      if (L && data.event) L.addEvent(data.event);
       return;
     }
 
     if (data.type === 'snapshot') {
       if (data.channel && data.channel !== 'log') return;
-      if (data.snapshot) logs().handleSnapshot(data.snapshot);
+      const L = Logs();
+      if (L && data.snapshot) L.handleSnapshot(data.snapshot);
       return;
     }
 
     if (data.type === 'note') {
       if (data.channel && data.channel !== 'log') return;
-      if (data.text) logs().addNote(data.text);
+      const L = Logs();
+      if (L && data.text) L.noteConsoleLine(data.text);
       return;
     }
 
     if (data.type === 'error') {
       appendOutput(data.message || '后端错误', 'error');
     }
+  }
+
+  function resetSessionState() {
+    disableRawInput();
+    rawDetectBuf = '';
+    terminalLineHold = '';
+    ipcEchoMode = false;
+    ipcInputBuf = '';
+    viSessionActive = false;
+    awaitingPrompt = false;
   }
 
   function connect() {
@@ -306,8 +371,7 @@ const LibertyTerminal = (() => {
 
     ready = false;
     resetLoginState();
-    disableRawInput();
-    rawDetectBuf = '';
+    resetSessionState();
     const url = getWsUrl();
     appendOutput(`连接 ${url} ...\n`, 'system');
     ws = new WebSocket(url);
@@ -328,8 +392,7 @@ const LibertyTerminal = (() => {
       setStatus(false, '未连接');
       ready = false;
       resetLoginState();
-      disableRawInput();
-      rawDetectBuf = '';
+      resetSessionState();
       appendOutput('连接已断开，3 秒后重连...\n', 'system');
       scheduleReconnect();
     };
@@ -338,7 +401,6 @@ const LibertyTerminal = (() => {
   function init(opts) {
     outputEl = opts.outputEl;
     inputEl = opts.inputEl;
-    promptLabelEl = opts.promptLabelEl || document.getElementById('console-prompt');
     onReady = opts.onReady || null;
     onStatus = opts.onStatus || null;
 
@@ -348,6 +410,8 @@ const LibertyTerminal = (() => {
       if (ch === null) return;
       if (inputEl && e.target === inputEl) return;
       e.preventDefault();
+      if (ipcEchoMode) noteIpcInput(ch);
+      if (ch === '\n' && finishIpcInteraction()) return;
       sendInput(ch);
     }, true);
 
@@ -359,6 +423,11 @@ const LibertyTerminal = (() => {
           const ch = keyToWire(e);
           if (ch === null) return;
           e.preventDefault();
+          if (ipcEchoMode) noteIpcInput(ch);
+          if (ch === '\n' && finishIpcInteraction()) {
+            sendInput(ch);
+            return;
+          }
           sendInput(ch);
           return;
         }

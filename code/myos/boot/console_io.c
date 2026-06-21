@@ -1,5 +1,7 @@
 #include "os.h"
 #include "console_io.h"
+#include "trap_csr.h"
+#include <stdarg.h>
 
 /*
  * Step 2 backend: both channels share the NS16550 UART byte stream.
@@ -14,6 +16,29 @@ enum log_sink_kind {
 
 static enum log_sink_kind log_sink = LOG_SINK_UART;
 
+/* One UART stream for console + LOG — emit each write atomically (no byte interleave). */
+static void uart_emit(const char *buf, size_t len)
+{
+	size_t i;
+#ifdef CONFIG_OPENSBI
+	reg_t saved = r_sstatus();
+#else
+	reg_t saved = r_mstatus();
+#endif
+
+	if (!buf || len == 0)
+		return;
+
+	cpu_irq_disable();
+	for (i = 0; i < len; i++)
+		uart_putc(buf[i]);
+#ifdef CONFIG_OPENSBI
+	w_sstatus(saved);
+#else
+	w_mstatus(saved);
+#endif
+}
+
 int console_putc(char ch)
 {
 	return uart_putc(ch);
@@ -21,12 +46,7 @@ int console_putc(char ch)
 
 void console_write(const char *buf, size_t len)
 {
-	size_t i;
-
-	if (!buf || len == 0)
-		return;
-	for (i = 0; i < len; i++)
-		uart_putc(buf[i]);
+	uart_emit(buf, len);
 }
 
 void console_puts(const char *s)
@@ -39,10 +59,7 @@ void console_puts(const char *s)
 
 static void log_write_uart(const char *buf, size_t len)
 {
-	size_t i;
-
-	for (i = 0; i < len; i++)
-		uart_putc(buf[i]);
+	uart_emit(buf, len);
 }
 
 int log_putc(char ch)
@@ -75,4 +92,26 @@ void log_puts(const char *s)
 	for (n = 0; s[n]; n++)
 		;
 	log_write(s, n);
+}
+
+#define LOG_NOTE_PREFIX "LOG_NOTE "
+
+void proc_trace_printf(const char *fmt, ...)
+{
+	char body[280];
+	char line[320];
+	va_list ap;
+	int n;
+
+	if (!fmt)
+		return;
+	va_start(ap, fmt);
+	n = vsnprintf(body, sizeof(body), fmt, ap);
+	va_end(ap);
+	if (n <= 0)
+		return;
+	n = snprintf(line, sizeof(line), "%s%.*s", LOG_NOTE_PREFIX, n, body);
+	if (n <= 0)
+		return;
+	log_write(line, (size_t)n);
 }

@@ -31,7 +31,7 @@
 #endif
 
 #if CONSOLE_PROC
-#define proc_printf(...) printf(__VA_ARGS__)
+#define proc_printf(...) proc_trace_printf(__VA_ARGS__)
 #else
 #define proc_printf(...) ((void)0)
 #endif

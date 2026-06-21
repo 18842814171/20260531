@@ -17,7 +17,7 @@ int main(void)
 			"sb   zero, 0(sp)\n"
 			::: "memory");
 	}
-	write(1, "pagefault: done.\n", 16);
+	write(1, "pagefault: done.\n", 17);
 	asm volatile(
 		"li   t0, %0\n"
 		"add  sp, sp, t0\n"

@@ -7,11 +7,13 @@ import pty
 import select
 import stat
 import subprocess
+import termios
 import threading
+import tty
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_sock import Sock
 
@@ -26,6 +28,7 @@ PORT = int(os.environ.get("VM_PORT", "5000"))  # 与 nginx-libertyos.conf 中 pr
 
 LOG_EVENT_PREFIX = "LOG "
 LOG_SNAPSHOT_PREFIX = "LOG_SNAPSHOT "
+LOG_NOTE_PREFIX = "LOG_NOTE "
 
 # Matches kernel console_io.h channels (step 2: both on UART; host demux splits).
 CHANNEL_CONSOLE = "console"
@@ -46,6 +49,7 @@ class SerialDemux:
     _LOG_MARKERS = (
         (LOG_EVENT_PREFIX.encode("utf-8"), LOG_EVENT_PREFIX, "event"),
         (LOG_SNAPSHOT_PREFIX.encode("utf-8"), LOG_SNAPSHOT_PREFIX, "snapshot"),
+        (LOG_NOTE_PREFIX.encode("utf-8"), LOG_NOTE_PREFIX, "note"),
     )
 
     def __init__(self, send_json: Callable[[Dict], None]):
@@ -60,6 +64,9 @@ class SerialDemux:
 
     def _send_log_snapshot(self, snapshot: Dict) -> None:
         self._send_json({"type": "snapshot", "channel": CHANNEL_LOG, "snapshot": snapshot})
+
+    def _send_log_note(self, text: str) -> None:
+        self._send_json({"type": "note", "channel": CHANNEL_LOG, "text": text})
 
     def feed(self, chunk: bytes) -> None:
         if not chunk:
@@ -156,19 +163,31 @@ class SerialDemux:
     def _dispatch_log_segment(self, line: str, prefix: str, kind: str) -> None:
         clean = line.rstrip("\r\n")
         body = clean[len(prefix) :].strip()
+        if kind == "note":
+            if body:
+                self._send_log_note(body)
+            return
         if kind == "event":
             event = self._parse_json(body)
             if event is not None:
                 self._send_log_event(event)
-            else:
-                self._send_console(line)
             return
 
         snapshot = self._parse_json(body)
         if snapshot is not None:
             self._send_log_snapshot(snapshot)
-        else:
-            self._send_console(line)
+
+    @staticmethod
+    def _is_log_json_tail(line: str) -> bool:
+        """Drop UART-interleave garbage (e.g. odule":"sched"... without LOG prefix)."""
+        s = line.strip()
+        if not s:
+            return False
+        if s.startswith('odule":') or s.startswith('"module":'):
+            return True
+        if s.startswith("{") and '"module"' in s and '"event"' in s:
+            return True
+        return False
 
     def _dispatch_line(self, raw: bytes) -> None:
         line = raw.decode("utf-8", errors="replace")
@@ -180,6 +199,13 @@ class SerialDemux:
 
         if clean.startswith(LOG_SNAPSHOT_PREFIX):
             self._dispatch_log_segment(line, LOG_SNAPSHOT_PREFIX, "snapshot")
+            return
+
+        if clean.startswith(LOG_NOTE_PREFIX):
+            self._dispatch_log_segment(line, LOG_NOTE_PREFIX, "note")
+            return
+
+        if self._is_log_json_tail(clean):
             return
 
         self._send_console(line)
@@ -201,7 +227,18 @@ def _sanitize_env() -> Dict[str, str]:
     env.setdefault("LANG", "C.UTF-8")
     env.setdefault("LC_ALL", "C.UTF-8")
     env["DEBUG"] = "n"
+    # Web PTY uses byte-at-a-time input (vi, ipc_echo); do not re-enable icanon in start_qemu.sh.
+    env["MYOS_WEB"] = "1"
     return env
+
+
+def _configure_pty_raw(slave_fd: int) -> None:
+    """Disable host line buffering so single-key web input reaches QEMU immediately."""
+    tty.setraw(slave_fd)
+    attrs = termios.tcgetattr(slave_fd)
+    attrs[6][termios.VMIN] = 1
+    attrs[6][termios.VTIME] = 0
+    termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
 
 
 def _qemu_shell_cmd() -> str:
@@ -276,6 +313,16 @@ def health():
     )
 
 
+@app.route("/js/config.js")
+def js_config():
+    """Runtime UI switch: LIBERTY_LOG_UI=flat (default) | session."""
+    mode = os.environ.get("LIBERTY_LOG_UI", "flat").strip().lower()
+    if mode not in ("flat", "session"):
+        mode = "flat"
+    body = f"window.LIBERTY_LOG_UI = {json.dumps(mode)};\n"
+    return Response(body, mimetype="application/javascript")
+
+
 @app.route("/api/files", methods=["GET"])
 def api_files():
     return jsonify({"path": "/home/root", "files": _list_home_files()})
@@ -308,6 +355,7 @@ def ws_ssh(ws):
     stop_event = threading.Event()
 
     master_fd, slave_fd = pty.openpty()
+    _configure_pty_raw(slave_fd)
     try:
         shell_proc = subprocess.Popen(
             ["/bin/bash", "-lc", _qemu_shell_cmd()],

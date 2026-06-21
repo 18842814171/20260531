@@ -41,7 +41,7 @@ Implementation: `code/myos/boot/osviz_k.c` (events via `log_puts`)
 
 **Note:** `#define DEBUG` inside a user program (e.g. `test.c`) does **not** affect kernel macros — guest and kernel are separate builds.
 
-Human boot traces (`HEAP_START`, `trap_init`, …) use **`boot_printf`**. Process dispatch traces (`ENTER proc_user_first_run`, `[exit]`, …) use **`proc_printf`**. Both are independent of `LOG_*`.
+Human boot traces (`HEAP_START`, `trap_init`, …) use **`boot_printf`**. Process lifecycle traces now use **`LOG_PROC`** structured events (`user_enter`, `user_exit`, `zombie`, `vm_destroy`, `trap_return`, …) in `proc_user.c` / `proc.c` — not `proc_printf` text. `proc_trace_printf` remains for optional `LOG_NOTE` lines only.
 
 ### Macro reference
 
@@ -51,6 +51,7 @@ Human boot traces (`HEAP_START`, `trap_init`, …) use **`boot_printf`**. Proces
 | `LOG_BOOT_BANNER()` | ASCII banner + `LOG_BOOT("banner", …)` |
 | `LOG_EVENT(mod, ev, data)` | Generic event |
 | `LOG_BOOT` / `LOG_TRAP` / `LOG_TRAP_DIAG` / `LOG_PMM` / `LOG_PROC` / `LOG_SCHED` / `LOG_SEM` / `LOG_IRQ` | Module shortcuts |
+| `LOG_APP(app, ev, data)` | Application milestone (e.g. vi save, ipc_echo done) — macro present; few call sites yet |
 | `LOG_SNAPSHOT()` | IRQ/proc aggregate JSON |
 | `LOGIF(cond, mod, ev, data)` | Conditional event |
 
@@ -79,6 +80,10 @@ Fields:
 | `event` | Event name within module |
 | `hart` | `mhartid` |
 | `data` | Optional JSON object (inline, not nested string) |
+
+**Page faults (2026-06-21):** Successful demand-map in `trap.c` emits `LOG_IRQ("page_fault", {pid, sepc, stval, cause, handled:1})`. Unhandled faults emit `handled:0` before panic. JSON payload needs ≥128-byte snprintf buffer (64-byte buffer truncated JSON and host demux dropped events).
+
+**Proc lifecycle JSON:** Use only formats supported by `boot/printf.c` (`%d`, `%lx`, …) — not `%u` or `%p` in `snprintf` data strings.
 
 ### PMM event policy (2026-06-16)
 
@@ -154,6 +159,8 @@ Runtime capture directory when using `serial_reader.py`. See `events/README.md`.
 | Do not expect file logs from Web alone | Demux does not write `events.jsonl` yet (planned P2) |
 | Parse only **complete** `LOG` / `LOG_SNAPSHOT` lines | Avoid split JSON on the wire |
 | Interleaved bytes (`cLOG {…}`) | Host demux scans for markers mid-stream, not only line start |
+| UART byte interleave (`odule":"sched"…`) | Kernel: atomic `console_write` / `log_write` with IRQ masked per write (2026-06-21) |
+| Invalid LOG JSON after demux | Dropped silently (not forwarded to terminal) |
 | Boot `HEAP_START` etc. use `boot_printf`, not LOG | Suppressed when `DEBUG=0` or `AUTORUN`; otherwise in Web terminal |
 | `LOG_SCHED` with `"via":"kctx"` | Fresh dispatch or resume after `proc_kctx_switch` |
 
@@ -169,7 +176,8 @@ Runtime capture directory when using `serial_reader.py`. See `events/README.md`.
 | [PROBLEMS_AND_SOLUTIONS.md](PROBLEMS_AND_SOLUTIONS.md) | §11 Web demux / terminal gate |
 | [log/0613.md](../log/0613.md) | Stage 1–2 scheduling migration log |
 | [log/0616.md](../log/0616.md) | Batch pipeline, console gates, PMM quiet |
+| [log/0621debug.md](../log/0621debug.md) | Hierarchical log panel, LOG_PROC lifecycle, page_fault events, UART atomic write |
 
 ---
 
-*Last aligned with: boot/proc printf gates, batch testing, PMM quiet, Web channel demux (2026-06-16).*
+*Last aligned with: LOG_PROC lifecycle, page_fault LOG, hierarchical log tree, UART atomic write (2026-06-21).*

@@ -130,7 +130,8 @@ void proc_wakeup(void *chan)
 	if (pid < 0)
 		return;
 	proc_set_state(pid, PROC_READY);
-	snprintf(buf, sizeof(buf), "\"pid\":%d,\"chan\":\"%p\"", pid, chan);
+	snprintf(buf, sizeof(buf), "\"pid\":%d,\"chan\":\"0x%lx\"", pid,
+		 (unsigned long)chan);
 	LOG_SCHED("wakeup", buf);
 }
 
@@ -162,7 +163,8 @@ void proc_block(void *chan)
 	if (pid <= 0 || !chan)
 		return;
 
-	snprintf(buf, sizeof(buf), "\"pid\":%d,\"chan\":\"%p\"", pid, chan);
+	snprintf(buf, sizeof(buf), "\"pid\":%d,\"chan\":\"0x%lx\"", pid,
+		 (unsigned long)chan);
 	LOG_SCHED("block", buf);
 
 	wq_enqueue((struct wait_queue *)chan, pid);

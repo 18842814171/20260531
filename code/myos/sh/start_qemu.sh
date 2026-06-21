@@ -42,7 +42,7 @@ MYOS_QUIET="${MYOS_QUIET:-0}"
 
 run_qemu() {
 	if [[ "${MYOS_QUIET}" == "1" ]]; then
-		if [[ -t 0 ]]; then
+		if [[ -t 0 && "${MYOS_WEB:-}" != "1" ]]; then
 			stty icanon echo 2>/dev/null || true
 			trap 'stty sane 2>/dev/null || true' EXIT INT TERM
 		fi
@@ -59,7 +59,7 @@ run_qemu() {
 		echo "  warning: DEBUG=y pipes stdout — keyboard may not reach guest; use DEBUG=n"
 	fi
 	echo "------------------------------------"
-	if [[ -t 0 ]]; then
+	if [[ -t 0 && "${MYOS_WEB:-}" != "1" ]]; then
 		stty icanon echo 2>/dev/null || true
 		trap 'stty sane 2>/dev/null || true' EXIT INT TERM
 	fi

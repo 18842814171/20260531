@@ -121,7 +121,7 @@ static int trap_from_user(void)
 static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *cxt,
 				  reg_t *return_pc)
 {
-	char d[64];
+	char d[128];
 	int pid;
 
 	switch (cause_code) {
@@ -131,11 +131,14 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 		if (cxt->a7 == SYS_exit) {
 			pid = proc_current_pid();
 			if (pid > 0) {
+				char d[48];
+
 				*return_pc = proc_user_exit_trap(cxt);
 #ifdef CONFIG_OPENSBI
 				w_sstatus(r_sstatus() | SSTATUS_SPP);
 #endif
-				LOG_PROC("exit", "\"from\":\"user\"");
+				snprintf(d, sizeof(d), "\"pid\":%d,\"from\":\"user\"", pid);
+				LOG_PROC("exit", d);
 			} else {
 				task_exit_to_idle(cxt, (int)cxt->a0);
 				LOG_PROC("exit", NULL);
@@ -172,6 +175,10 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 		pid = proc_current_pid();
 		if (trap_from_user() && pid > 0 &&
 		    vm_fault_handle(pid, (uint64_t)r_stval(), cause_code) == 0) {
+			snprintf(d, sizeof(d),
+				 "\"pid\":%d,\"sepc\":\"0x%lx\",\"stval\":\"0x%lx\",\"cause\":%ld,\"handled\":1",
+				 pid, (long)epc, (long)r_stval(), (long)cause_code);
+			LOG_IRQ("page_fault", d);
 			*return_pc = epc;
 			break;
 		}
@@ -180,19 +187,16 @@ static void handle_sync_exception(reg_t cause_code, reg_t epc, struct context *c
 				 "\"pid\":%d,\"sepc\":\"0x%lx\",\"stval\":\"0x%lx\",\"cause\":%ld",
 				 pid, (long)epc, (long)r_stval(), (long)cause_code);
 			LOG_PROC("fault_kill", d);
-			printf("user fault: killed pid=%d sepc=0x%lx stval=0x%lx cause=%ld\n",
-			       pid, (long)epc, (long)r_stval(), (long)cause_code);
 			*return_pc = proc_user_fault_trap(cxt);
 #ifdef CONFIG_OPENSBI
 			w_sstatus(r_sstatus() | SSTATUS_SPP);
 #endif
 			break;
 		}
-		snprintf(d, sizeof(d), "\"sepc\":\"0x%lx\",\"stval\":\"0x%lx\",\"cause\":%ld",
-			 (long)epc, (long)r_stval(), (long)cause_code);
+		snprintf(d, sizeof(d),
+			 "\"pid\":%d,\"sepc\":\"0x%lx\",\"stval\":\"0x%lx\",\"cause\":%ld,\"handled\":0",
+			 pid, (long)epc, (long)r_stval(), (long)cause_code);
 		LOG_IRQ("page_fault", d);
-		printf("page fault pid=%d current=%d sepc=0x%lx stval=0x%lx cause=%ld (unhandled)\n",
-		       pid, proc_current_pid(), (long)epc, (long)r_stval(), (long)cause_code);
 		trap_diag_print_fault_frame(epc, cxt);
 		trap_check_return_pc(epc, epc);
 		panic("page fault");

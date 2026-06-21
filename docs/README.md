@@ -84,9 +84,10 @@ See [使用方法.md](../使用方法.md) for a concise Chinese operator sheet.
 | [log/0614debug.md](../log/0614debug.md) | 2026-06-14 — Stage 3–4 收尾、文档同步、原则 9 检查 |
 | [log/0615debug.md](../log/0615debug.md) | 2026-06-15 — console/log split, Web demux, bg script poll |
 | [log/0616.md](../log/0616.md) | 2026-06-16 — batch pipeline, boot/proc printf gates, event panel queue |
+| [log/0621debug.md](../log/0621debug.md) | 2026-06-21 — 三级日志面板、结构化进程/缺页记录、终端与分流修复 |
 | [6.14.txt](../6.14.txt) | 2026-06-14 — Stage 3–4 completion notes (scheduler-only dispatch) |
 | [6.16.txt](../6.16.txt) | 2026-06-16 — system status and task.md alignment |
 
 ---
 
-*Last aligned with: batch testing, boot/proc console gates, event panel queue, PMM quiet (2026-06-16).*
+*Last aligned with: hierarchical log tree, LOG_PROC lifecycle, page_fault LOG, UART atomic write (2026-06-21).*

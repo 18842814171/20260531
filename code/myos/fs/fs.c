@@ -60,15 +60,32 @@ static int path_normalize(const char *in, char *out, int cap)
 {
 	char parts[32][FS_MAX_NAME];
 	int np = 0;
-	int abs = 0;
 	int i;
 	const char *p;
 
 	if (!in || !out || cap <= 0)
 		return -1;
 
-	if (in[0] == '/')
-		abs = 1;
+	if (in[0] != '/') {
+		const char *q = cwd;
+
+		if (!(q[0] == '/' && q[1] == '\0')) {
+			if (q[0] == '/')
+				q++;
+			while (*q) {
+				char seg[FS_MAX_NAME];
+				int k = 0;
+
+				while (*q && *q != '/' && k < FS_MAX_NAME - 1)
+					seg[k++] = *q++;
+				seg[k] = '\0';
+				if (seg[0] && np < 32)
+					path_copy(parts[np++], FS_MAX_NAME, seg);
+				while (*q == '/')
+					q++;
+			}
+		}
+	}
 
 	p = in;
 	while (*p) {
@@ -93,24 +110,17 @@ static int path_normalize(const char *in, char *out, int cap)
 			path_copy(parts[np++], FS_MAX_NAME, seg);
 	}
 
-	if (abs) {
-		if (np == 0) {
-			path_copy(out, cap, "/");
-			return 0;
-		}
-		out[0] = '\0';
-		for (i = 0; i < np; i++) {
-			if (out[0] == '\0')
-				snprintf(out, cap, "/%s", parts[i]);
-			else
-				snprintf(out + str_len(out), cap - str_len(out), "/%s", parts[i]);
-		}
+	if (np == 0) {
+		path_copy(out, cap, "/");
 		return 0;
 	}
-
-	path_copy(out, cap, cwd);
-	for (i = 0; i < np; i++)
-		snprintf(out + str_len(out), cap - str_len(out), "/%s", parts[i]);
+	out[0] = '\0';
+	for (i = 0; i < np; i++) {
+		if (out[0] == '\0')
+			snprintf(out, cap, "/%s", parts[i]);
+		else
+			snprintf(out + str_len(out), cap - str_len(out), "/%s", parts[i]);
+	}
 	return 0;
 }
 

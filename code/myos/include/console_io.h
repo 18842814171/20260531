@@ -29,4 +29,7 @@ int log_putc(char ch);
 void log_write(const char *buf, size_t len);
 void log_puts(const char *s);
 
+/* Kernel proc trace → LOG_NOTE (host demux → log panel, not terminal). */
+void proc_trace_printf(const char *fmt, ...);
+
 #endif /* __CONSOLE_IO_H__ */

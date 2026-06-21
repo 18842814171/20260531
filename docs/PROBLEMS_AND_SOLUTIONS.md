@@ -417,6 +417,62 @@ The shell path **`proc_spawn_exec_wait` → scheduler dispatch → user executio
 
 ---
 
+### 11.8 Hierarchical log panel missing page-fault tier for `./pagefault`
+
+**Problem.** After adding the three-level event panel, `./pagefault` showed only “process lifecycle” at tier two, not page faults.
+
+**Root cause (dual).**
+
+1. Successful demand-map faults did not emit **`LOG_IRQ("page_fault")`** — only unhandled faults logged.
+2. When logging was added, **`snprintf` buffer was 64 bytes** but JSON needed ~87 bytes; host demux parsed truncated JSON and dropped the line.
+
+**Resolution.** Emit `page_fault` with `handled:1` on successful `vm_fault_handle`; enlarge trap handler data buffer to 128 bytes. Frontend classifies `module=irq`, `event=page_fault` into tier two. See [log/0621debug.md](../log/0621debug.md).
+
+---
+
+### 11.9 LOG JSON or fragments in browser terminal
+
+**Problem.** Terminal showed malformed `LOG {"status":0x…` lines, or fragments like `odule":"sched","event":"unblock"`.
+
+**Root cause (dual).**
+
+1. **`%u` / `%p` in kernel `snprintf` data** — mini `printf.c` does not support `%u`; JSON corrupted → demux used to fall back to terminal.
+2. **`console_write` and `log_write` interleaved byte-by-byte** on one UART without locking.
+
+**Resolution.** Use `%d` / `%lx` in LOG data strings; demux drops invalid JSON instead of forwarding to terminal; kernel sends each write atomically with IRQ masked (`console_io.c`). Removed duplicate fault `printf` in `trap.c`.
+
+---
+
+### 11.10 Program output glued to shell prompt
+
+**Problem.** e.g. `pagefault: done.root@/home/root$` on one line.
+
+**Root cause.** `write(1, "pagefault: done.\n", 16)` — string is 17 bytes; newline omitted. Shell then printed prompt on the same line.
+
+**Resolution.** Correct write length; shell prints `\n` before each prompt as a safety net.
+
+---
+
+### 11.11 Web input prompt label out of sync after `cd`
+
+**Problem.** Scrollback showed `root@/home/root/dir1$` but the input row still showed `root@/home/root$` plus placeholder text — looked like cwd reverted.
+
+**Root cause.** `#console-prompt` in `desktop.html` was static; guest prompt updated in serial output only.
+
+**Resolution.** `terminal.js` updates `#console-prompt` from each `root@…$` line in the serial stream.
+
+---
+
+### 11.12 Frontend regex / program-name lists for log classification (removed)
+
+**Problem.** Early tree panel used hardcoded program names (`pagefault`, `ipc_echo`, …) and regex on `LOG_NOTE` text (`ENTER proc_user_first_run`, `[exit]`, …).
+
+**Root cause.** Kernel had not yet emitted structured proc events; frontend guessed from strings.
+
+**Resolution.** Kernel emits **`LOG_PROC`** lifecycle events; frontend **`log_aggregate.js`** classifies by `module` + `event` only. Program-name `rich` profile removed; tier-two visibility driven by bucket content. Application milestones still pending **`LOG_APP`**.
+
+---
+
 ## 14. Batch testing (AUTORUN=test)
 
 ### 14.1 Hang before `BATCH_SUMMARY`
@@ -520,7 +576,7 @@ See [6.14.txt](../6.14.txt) and [01_architecture.md](01_architecture.md) §6.
 
 ## 13. Chronological arc (summary)
 
-Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **per-process trap frames** and **`proc_wait`** required **kernel `gp` in the trap vector** and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **UART RX IRQ + ring** and **`proc_sched` block/wakeup** enabled blocking `read` and **`ipc_echo`**. Coroutine-era **`proc_user_run` / `after_uspace`** fixed early exit stack mismatches but caused **READY starvation** and **stale continuation panics** until **`proc_kctx_switch`** and **`kctx_asleep`**. **2026-06-13:** **Stage 1–2** — `proc_kcontext`, dedicated **scheduler stack**, shell UART resume. **2026-06-14:** **Stages 3–4** — scheduler-only fresh dispatch, **`proc_user_trap_return`**, removal of coroutine/longjmp paths; TTY + piped **`ipc_echo`** verified. **Observability:** macro-gated **`LOG_*`**, **`boot_printf`/`proc_printf`** console gates, **LibertyOS Web UI** with **server-side serial demux**, **batch regression** via **`AUTORUN=test`**. **2026-06-16:** event panel serial reveal queue, PMM quiet, **`run_batch.sh`** + **`judge_batch.py`**.
+Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `prog_exec`** exposed **`sscratch` lifecycle**, **incorrect shell stack capture**, and **`SPP` not restored** on return to supervisor. Migration to **per-process trap frames** and **`proc_wait`** required **kernel `gp` in the trap vector** and **strict ordering of `reg_save` vs syscall arguments**. **ELF corruption** from **embed padding** and **low boot stack** masqueraded as trap bugs until memory at user entry was verified. **Sv39** moved user base to **`0x80400000`**, added **demand stack mapping** and **`yebiao`**. **`waitpid` parent resume** required **`proc_activate_user` on trap return**. **UART RX IRQ + ring** and **`proc_sched` block/wakeup** enabled blocking `read` and **`ipc_echo`**. Coroutine-era **`proc_user_run` / `after_uspace`** fixed early exit stack mismatches but caused **READY starvation** and **stale continuation panics** until **`proc_kctx_switch`** and **`kctx_asleep`**. **2026-06-13:** **Stage 1–2** — `proc_kcontext`, dedicated **scheduler stack**, shell UART resume. **2026-06-14:** **Stages 3–4** — scheduler-only fresh dispatch, **`proc_user_trap_return`**, removal of coroutine/longjmp paths; TTY + piped **`ipc_echo`** verified. **Observability:** macro-gated **`LOG_*`**, **`boot_printf`/`proc_printf`** console gates, **LibertyOS Web UI** with **server-side serial demux**, **batch regression** via **`AUTORUN=test`**. **2026-06-16:** event panel serial reveal queue, PMM quiet, **`run_batch.sh`** + **`judge_batch.py`**. **2026-06-21:** hierarchical log tree, **`LOG_PROC`** lifecycle events, handled **page_fault** logging, UART atomic write, terminal prompt sync.
 
 ---
 
@@ -533,7 +589,8 @@ Bring-up began with **OpenSBI and unified MMIO UART** for login. **Cooperative `
 | [README.md](README.md) | Operator quick start |
 | [log/0613.md](../log/0613.md) | 2026-06-13 Stage 1–2 change log |
 | [log/0616.md](../log/0616.md) | 2026-06-16 batch pipeline and console gates |
+| [log/0621debug.md](../log/0621debug.md) | 2026-06-21 hierarchical log panel and demux fixes |
 
 ---
 
-*Last aligned with: batch AUTORUN=test, boot/proc printf gates, event panel queue, PMM quiet (2026-06-16).*
+*Last aligned with: hierarchical log tree, LOG_PROC lifecycle, page_fault LOG (2026-06-21).*

@@ -11,7 +11,7 @@ index.html          Login (username must be root) → sessionStorage
 desktop.html        Main workspace
   ├─ sidebar        Desktop icons + /home/root file tree
   ├─ workspace      File preview + resizable terminal (drag splitter)
-  └─ log-bubble-panel   Right column: kernel events (newest at bottom)
+  └─ log-bubble-panel   Right column: command → semantic event → raw JSON (tree)
 ```
 
 Scripts (load order on `desktop.html`):
@@ -19,8 +19,10 @@ Scripts (load order on `desktop.html`):
 | File | Role |
 |------|------|
 | `js/global.js` | Session, file icons |
-| `js/logs.js` | Event cards, scroll feed (max 500) |
-| `js/terminal.js` | WebSocket, login gate, line/raw input |
+| `js/log_aggregate.js` | L1/L2 aggregation rules (module/event, no program-name lists) |
+| `js/logs_tree.js` | Hierarchical command cards (default panel) |
+| `js/logs.js` | Flat event cards fallback (max 500) |
+| `js/terminal.js` | WebSocket, login gate, line/raw input, prompt label sync |
 | `js/files.js` | `/api/files`, run command helper |
 | `js/desktop.js` | Wiring, terminal height splitter |
 
@@ -80,13 +82,18 @@ Guest console text and structured logs share one PTY byte stream.
 
 - Lines (or embedded segments) starting with `LOG ` → `type=event`, `channel=log`
 - `LOG_SNAPSHOT ` → `type=snapshot`, `channel=log`
+- `LOG_NOTE ` → `type=note`, `channel=log`
 - All other bytes → `type=output`, `channel=console`
+
+**Invalid JSON:** Parsed log lines that fail `json.loads` are **dropped** (not shown in terminal or panel).
+
+**JSON tails:** Lines like `odule":"sched"...` without a `LOG ` prefix are discarded (defence against historical UART interleave).
 
 **Interleaved input:** When shell output and a log line arrive in one chunk (e.g. `cLOG {"ts_ms":…}`), demux extracts the log segment and forwards the surrounding bytes as console output.
 
 **Partial lines:** Incomplete `LOG` / `LOG_SNAPSHOT` prefixes are held in buffer until `\n` or disconnect flush.
 
-Invalid JSON after a log prefix falls back to console output.
+~~Invalid JSON after a log prefix falls back to console output.~~ *(2026-06-21: dropped instead.)*
 
 ---
 
@@ -108,15 +115,36 @@ When output contains `-- vi … --`, `-- NORMAL --`, `-- INSERT --`, or `ipc_ech
 
 If a log line still reaches `type=output`, the client strips `LOG {"ts_ms"…}` segments and forwards them to the event panel.
 
+### Prompt label sync (2026-06-21)
+
+Guest shell prints `root@<cwd>$` in the serial stream. The input row also has `#console-prompt` — updated from each prompt line detected in output so `cd` changes stay in sync. Placeholder text is owned by `terminal.js` only (not `desktop.js`).
+
 ---
 
-## 6. Event panel (`logs.js`)
+## 6. Event panel
+
+### Flat mode (`logs.js`)
 
 - Card templates for trap, boot, proc, pmm, etc.
-- Newest events at bottom; auto-scroll when near bottom; upward scroll pauses follow
-- Max 500 events retained
-- **Serial reveal queue (2026-06-16):** one bubble animates at a time; next starts after CSS transition (`REVEAL_GAP_MS` 50ms; fallback 100ms) — avoids out-of-order display during trap bursts
-- **`QUIET_MODULES`:** `pmm` events are dropped from the main panel (still on serial / optional jsonl); kernel no longer emits per alloc/free `LOG_PMM`
+- Newest events at bottom; max 500 retained
+- **`QUIET_MODULES`:** `pmm` events dropped from main panel
+
+### Tree mode (`logs_tree.js` + `log_aggregate.js`) — default
+
+```text
+L1 CommandRun     one user command (deferred reveal after prompt/exit)
+  L2 SysEvent     page faults, process lifecycle, sem, … (only if bucket non-empty)
+    L3 Raw        LOG JSON fields
+```
+
+| Profile | L1 behaviour |
+|---------|----------------|
+| Shell builtin (no `./`) | Title + “completed”, usually no L2 |
+| External ELF (`./prog`) | Expandable; L2 from kernel buckets |
+
+- Serial reveal queue (same as flat mode)
+- L1 closes on: process exit + prompt, explicit end (`ipc_echo done`), or prompt heuristic for builtins
+- Page-fault episodes: NOTE context stack until trap leave (P4 `activity_id` planned)
 
 ---
 
@@ -147,6 +175,10 @@ If a log line still reaches `type=output`, the client strips `LOG {"ts_ms"…}` 
 | Bubble list won't scroll up | CSS flex-end bug (fixed) | Hard refresh |
 | Trap bubbles appear out of order | Independent random delays (fixed) | Hard refresh; see serial reveal queue |
 | PMM alloc/free floods panel | High-frequency LOG (fixed) | Kernel + `QUIET_MODULES`; hard refresh |
+| `./pagefault` only shows lifecycle L2 | Handled faults had no LOG; or 64B JSON truncated | Rebuild kernel; see [log/0621debug.md](../log/0621debug.md) |
+| Output glued to prompt (`done.root@`) | `write()` length off by one | Fixed in `pagefault.c`; shell adds `\n` before prompt |
+| Input prompt stuck at `/home/root` after `cd` | Static `#console-prompt` | Hard refresh; prompt sync in `terminal.js` |
+| JSON fragment `odule":"sched"` in terminal | UART interleave | Rebuild kernel (`console_io.c` atomic write) |
 
 ---
 
@@ -160,4 +192,4 @@ If a log line still reaches `type=output`, the client strips `LOG {"ts_ms"…}` 
 
 ---
 
-*Last aligned with: event reveal queue, QUIET_MODULES, batch run_batch.sh (2026-06-16).*
+*Last aligned with: hierarchical log tree, prompt sync, demux JSON drop, page_fault LOG (2026-06-21).*
